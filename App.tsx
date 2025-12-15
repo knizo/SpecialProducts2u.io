@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingBag, LayoutGrid, PlusCircle, Search, Gift, Lock, LogOut } from 'lucide-react';
+import { ShoppingBag, LayoutGrid, PlusCircle, Search, Gift, Lock, LogOut, Settings } from 'lucide-react';
 import { Product, ViewState } from './types';
 import { getStoredProducts, saveProducts } from './services/storageService';
 import { ProductCard } from './components/ProductCard';
 import { AdminPanel } from './components/AdminPanel';
+import { AdminSettings } from './components/AdminSettings';
 import { Login } from './components/Login';
 import { Button } from './components/Button';
 
@@ -108,6 +109,15 @@ const App: React.FC = () => {
                       View Catalog
                     </Button>
                   )}
+                  
+                  <button 
+                    onClick={() => setView('settings')}
+                    className={`p-2 transition-colors ${view === 'settings' ? 'text-brand-600 bg-brand-50 rounded-full' : 'text-gray-500 hover:text-brand-600'}`}
+                    title="Settings"
+                  >
+                    <Settings size={20} />
+                  </button>
+
                   <button 
                     onClick={handleLogout}
                     className="p-2 text-gray-500 hover:text-red-600 transition-colors"
@@ -152,6 +162,8 @@ const App: React.FC = () => {
       <main className="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
         {view === 'login' ? (
            <Login onLogin={handleLogin} onCancel={() => setView('home')} /> 
+        ) : view === 'settings' && isAuthenticated ? (
+           <AdminSettings onCancel={() => setView('home')} />
         ) : view === 'admin' && isAuthenticated ? (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="mb-8 text-center">
@@ -166,7 +178,7 @@ const App: React.FC = () => {
         ) : (
           <>
             {/* Category Filter */}
-            {categories.length > 1 && (
+            {categories.length > 1 && view === 'home' && (
                 <div className="flex gap-2 mb-8 overflow-x-auto no-scrollbar pb-2">
                     {categories.map(cat => (
                         <button

@@ -19,4 +19,11 @@ export interface ProductFormData {
   category: string;
 }
 
-export type ViewState = 'home' | 'admin' | 'login';
+export interface AdminConfig {
+  username: string;
+  password: string; // In a real app, this should be hashed. Storing plain for this demo.
+  twoFactorSecret?: string;
+  is2FAEnabled: boolean;
+}
+
+export type ViewState = 'home' | 'admin' | 'login' | 'settings';
