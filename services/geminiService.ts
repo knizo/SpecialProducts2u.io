@@ -1,14 +1,8 @@
 import { GoogleGenAI } from "@google/genai";
 
-const apiKey = process.env.API_KEY || '';
-const ai = new GoogleGenAI({ apiKey });
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const generateProductDescription = async (productName: string, category: string): Promise<string> => {
-  if (!apiKey) {
-    console.warn("No API Key provided for Gemini.");
-    return "Please configure your API Key to use AI generation features.";
-  }
-
   try {
     const prompt = `
       Write a persuasive, short, and catchy product description for an affiliate marketing website.
@@ -31,8 +25,6 @@ export const generateProductDescription = async (productName: string, category: 
 };
 
 export const suggestCategory = async (productName: string): Promise<string> => {
-    if (!apiKey) return "General";
-    
     try {
         const prompt = `Suggest a single, short category name (max 2 words) for a product named: "${productName}". Example: "Electronics", "Home Decor", "Mens Fashion". Return ONLY the category name.`;
         
