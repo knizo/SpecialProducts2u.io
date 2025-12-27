@@ -28,10 +28,36 @@ if (Array.isArray(promoLinks?.promotion_link)) {
 }
 
 if (!affiliateLink) {
-  return res.status(502).json({
-    error: "Affiliate link failed",
-    debug: link
-  });
+  // 🟢 Fallback: DeepLink Affiliate
+  const deepLinkParams = {
+    app_key: appKey,
+    method: "aliexpress.affiliate.link.generate",
+    timestamp: Date.now(),
+    format: "json",
+    sign_method: "md5",
+    promotion_link_type: "0",
+    source_values: cleanUrl
+  };
+
+  deepLinkParams.sign = sign(deepLinkParams, secret);
+
+  const deepLink = await aliRequest(deepLinkParams);
+
+  const deepPromo =
+    deepLink?.aliexpress_affiliate_link_generate_response
+      ?.resp_result?.result?.promotion_links?.promotion_link?.[0]?.promotion_link;
+
+  if (!deepPromo) {
+    return res.status(502).json({
+      error: "Affiliate link failed",
+      debug: {
+        smart: link,
+        deep: deepLink
+      }
+    });
+  }
+
+  affiliateLink = deepPromo;
 }
 
 return res.json({
