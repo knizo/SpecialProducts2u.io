@@ -19,7 +19,7 @@ const promoLinks =
   link?.aliexpress_affiliate_link_generate_response
     ?.resp_result?.result?.promotion_links;
 
-let affiliateLink: string | undefined;
+let affiliateLink;
 
 if (Array.isArray(promoLinks?.promotion_link)) {
   affiliateLink = promoLinks.promotion_link[0]?.promotion_link;
