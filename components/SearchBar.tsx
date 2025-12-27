@@ -16,12 +16,13 @@ export default function SearchBar({ onResults }: Props) {
     setLoading(true);
     try {
       const result = await affiliateSearch(query);
-      onResults([result]);
+      onResults([result]); // כרגע מוצר אחד
     } catch (err) {
-      alert("Search failed, try again");
+      console.error("Affiliate search failed", err);
     } finally {
       setLoading(false);
     }
+  }
 
   return (
     <form
@@ -29,6 +30,7 @@ export default function SearchBar({ onResults }: Props) {
       className="flex items-center gap-3 w-full max-w-2xl mx-auto"
     >
       <input
+        type="text"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Search for amazing deals..."
