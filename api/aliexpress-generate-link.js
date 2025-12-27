@@ -33,7 +33,7 @@ export default async function handler(req, res) {
     sign_method: "md5",
     promotion_link_type: "0",
     source_values: product_id,
-    tracking_id: "knizo"
+    tracking_id: "default"
   };
 
   params.sign = sign(params, appSecret);
