@@ -1,4 +1,4 @@
-import md5 from "md5";
+import crypto from "crypto";
 import fetch from "node-fetch";
 
 export default async function handler(req, res) {
@@ -19,12 +19,17 @@ export default async function handler(req, res) {
     }
 
     function sign(params) {
-      const sorted = Object.keys(params)
-        .sort()
-        .map(k => `${k}${params[k]}`)
-        .join("");
-      return md5(secret + sorted + secret).toUpperCase();
-    }
+  const sorted = Object.keys(params)
+    .sort()
+    .map(k => `${k}${params[k]}`)
+    .join("");
+
+  return crypto
+    .createHash("md5")
+    .update(secret + sorted + secret)
+    .digest("hex")
+    .toUpperCase();
+}
 
     const params = {
       app_key: appKey,
