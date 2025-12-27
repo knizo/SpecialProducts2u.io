@@ -54,9 +54,18 @@ export default async function handler(req, res) {
 
     const response = await fetch(url);
     const data = await response.json();
+    const product =
+  data?.aliexpress_affiliate_product_query_response
+    ?.resp_result?.result?.products?.product?.[0];
+
+if (!product) {
+  return res.status(404).json({
+    error: "No product found"
+  });
+}
 
     // 🔍 החזרה לבדיקה בלבד
-    return res.json({
+   return res.json({
   title: product.product_title,
   price: parseFloat(product.target_sale_price),
   currency: product.target_sale_price_currency,
