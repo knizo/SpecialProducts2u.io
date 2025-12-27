@@ -57,11 +57,12 @@ export default async function handler(req, res) {
 
     // 🔍 החזרה לבדיקה בלבד
     return res.json({
-      ok: true,
-      query,
-      sample: data?.aliexpress_affiliate_product_query_response
-        ?.resp_result?.result?.products?.product?.[0] || null
-    });
+  title: product.product_title,
+  price: parseFloat(product.target_sale_price),
+  currency: product.target_sale_price_currency,
+  image: product.product_main_image_url,
+  affiliate_link: product.promotion_link
+});
 
   } catch (err) {
     console.error("Step 1 failed:", err);
