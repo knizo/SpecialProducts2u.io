@@ -19,7 +19,6 @@ const promoLinks =
   link?.aliexpress_affiliate_link_generate_response
     ?.resp_result?.result?.promotion_links;
 
-// נסה להוציא לינק בכל צורה אפשרית
 let affiliateLink: string | undefined;
 
 if (Array.isArray(promoLinks?.promotion_link)) {
@@ -34,3 +33,10 @@ if (!affiliateLink) {
     debug: link
   });
 }
+
+return res.json({
+  title: product.product_title,
+  price: product.target_sale_price,
+  image: product.product_main_image_url,
+  affiliate_link: affiliateLink
+});
