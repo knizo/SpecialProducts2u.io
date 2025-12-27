@@ -16,11 +16,12 @@ export default function SearchBar({ onResults }: Props) {
     setLoading(true);
     try {
       const result = await affiliateSearch(query);
-      onResults([result]); // כרגע מוצר אחד
+      onResults([result]);
+    } catch (err) {
+      alert("Search failed, try again");
     } finally {
       setLoading(false);
     }
-  }
 
   return (
     <form
@@ -36,7 +37,8 @@ export default function SearchBar({ onResults }: Props) {
 
       <button
         type="submit"
-        className="px-6 py-2 rounded-full bg-brand-500 text-white hover:bg-brand-600"
+        disabled={loading}
+        className="px-6 py-2 rounded-full bg-brand-500 text-white hover:bg-brand-600 disabled:opacity-50"
       >
         {loading ? "Searching..." : "Search"}
       </button>
