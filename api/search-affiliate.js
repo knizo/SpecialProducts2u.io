@@ -5,9 +5,9 @@ export default async function handler(req, res) {
   try {
     const query = req.query.q || "test";
 
-    const appKey = process.env.ALI_APP_KEY;
-    const secret = process.env.ALI_APP_SECRET;
-    const trackingId = process.env.ALI_TRACKING_ID;
+    const appKey = process.env.ALIEXPRESS_APP_KEY;
+    const secret = process.env.ALIEXPRESS_APP_SECRET;
+    const trackingId = process.env.ALIEXPRESS_TRACKING_ID;
 
     if (!appKey || !secret || !trackingId) {
       return res.status(500).json({
