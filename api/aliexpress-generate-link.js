@@ -16,10 +16,10 @@ function sign(params, secret) {
 }
 
 export default async function handler(req, res) {
-  const { product_id } = req.query;
+  const { product_url } = req.query;
 
-  if (!product_id) {
-    return res.status(400).json({ error: "Missing product_id" });
+  if (!product_url) {
+    return res.status(400).json({ error: "Missing product_url" });
   }
 
   const appKey = process.env.ALIEXPRESS_APP_KEY;
@@ -32,8 +32,8 @@ export default async function handler(req, res) {
     format: "json",
     sign_method: "md5",
     promotion_link_type: "2",
-    source_values: product_id,
-    tracking_id: "Electronics"
+    source_values: product_url,
+    tracking_id: "YOUR_REAL_TRACKING_ID"
   };
 
   params.sign = sign(params, appSecret);
