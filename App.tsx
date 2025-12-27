@@ -55,9 +55,11 @@ const App: React.FC = () => {
         title: result.title,
         description: "Top deal from AliExpress",
         price: parseFloat(result.price),
+        currency: "USD",
         imageUrl: result.image,
         affiliateLink: result.affiliate_link,
-        category: "AliExpress"
+        category: "AliExpress",
+        createdAt: Date.now()
       };
 
       setAffiliateResults([mapped]);
