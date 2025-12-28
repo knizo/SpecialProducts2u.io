@@ -3,9 +3,18 @@ import fetch from "node-fetch";
 
 const ALI_ENDPOINT = "https://api-sg.aliexpress.com/sync";
 
+function cleanParams(obj) {
+  // מוחק מפתחות עם undefined/null/"" כדי שלא יישלחו בכלל
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined || v === null || v === "") continue;
+    out[k] = v;
+  }
+  return out;
+}
+
 function sign(secret, params) {
   const sorted = Object.keys(params)
-    .filter((k) => params[k] !== undefined && params[k] !== null && params[k] !== "")
     .sort()
     .map((k) => `${k}${params[k]}`)
     .join("");
@@ -17,8 +26,8 @@ function sign(secret, params) {
     .toUpperCase();
 }
 
-// מילות סינון ברירת מחדל נגד "אביזרים" (הרבה פעמים זה הורס את הרלוונטיות)
-function defaultExcludeForQuery(q) {
+// מסנן אביזרים נפוצים (קייסים וכו')
+function defaultExcludeForQuery() {
   return [
     "case",
     "cover",
@@ -35,49 +44,41 @@ function defaultExcludeForQuery(q) {
   ];
 }
 
-// דירוג תוצאה: בונוס למילות מפתח חשובות, קנס כבד לאביזרים
 function scoreProduct(product, spec) {
   const title = (product?.product_title || "").toLowerCase();
-  const text = title; // לרוב מספיק. אם תרצה להוסיף תיאור - תלוי ב-API אם מחזיר.
-
   const mustHave = spec.mustHave || [];
   const niceToHave = spec.niceToHave || [];
   const exclude = spec.exclude || [];
-
   let score = 0;
 
   for (const w of exclude) {
     if (!w) continue;
-    if (text.includes(String(w).toLowerCase())) score -= 25;
+    if (title.includes(String(w).toLowerCase())) score -= 25;
   }
-
   for (const w of mustHave) {
     if (!w) continue;
-    if (text.includes(String(w).toLowerCase())) score += 12;
+    if (title.includes(String(w).toLowerCase())) score += 12;
   }
-
   for (const w of niceToHave) {
     if (!w) continue;
-    if (text.includes(String(w).toLowerCase())) score += 4;
+    if (title.includes(String(w).toLowerCase())) score += 4;
   }
 
   const price = parseFloat(product?.target_sale_price);
   if (spec.price?.min != null && !Number.isNaN(price) && price < spec.price.min) score -= 8;
   if (spec.price?.max != null && !Number.isNaN(price) && price > spec.price.max) score -= 8;
 
-  // בונוסים כלליים לאוזניות
   if (spec.productType === "wireless_earbuds") {
-    if (text.includes("earbud")) score += 3;
-    if (text.includes("tws")) score += 3;
-    if (text.includes("anc") || text.includes("noise cancel")) score += 3;
+    if (title.includes("earbud")) score += 3;
+    if (title.includes("tws")) score += 3;
+    if (title.includes("anc") || title.includes("noise cancel")) score += 3;
   }
 
   return score;
 }
 
-// אופציונלי: אם תרצה לחבר AI אמיתי בעתיד – כאן המקום.
-// כרגע מחזיר null כדי לא לשבור כלום.
-async function refineWithAI(query) {
+// כרגע AI לא מחובר כדי לא לשבור כלום
+async function refineWithAI() {
   if (process.env.AI_REFINE_ENABLED !== "1") return null;
   return null;
 }
@@ -93,7 +94,7 @@ function buildFallbackSpec(query) {
     queries: [],
     mustHave: [],
     niceToHave: [],
-    exclude: defaultExcludeForQuery(q),
+    exclude: defaultExcludeForQuery(),
     price: isAirpodsLike ? { min: 20, max: 250 } : null,
     sortPreference: "LAST_VOLUME_DESC"
   };
@@ -113,7 +114,6 @@ function buildFallbackSpec(query) {
   return spec;
 }
 
-// קריאה ל-AliExpress affiliate product query
 async function aliSearch({
   appKey,
   secret,
@@ -129,7 +129,8 @@ async function aliSearch({
   deliveryDays,
   sort
 }) {
-  const params = {
+  // בונים פרמטרים בסיסיים
+  let params = {
     app_key: appKey,
     method: "aliexpress.affiliate.product.query",
     timestamp: Date.now(),
@@ -143,12 +144,15 @@ async function aliSearch({
     target_language: targetLanguage,
     ship_to_country: shipTo,
 
-    // אופציונלי (אם ה-API שלך תומך): פילטרים
+    // אופציונליים — יימחקו אם undefined
     min_sale_price: minPrice,
     max_sale_price: maxPrice,
     delivery_days: deliveryDays,
     sort
   };
+
+  // ✅ קריטי: לנקות לפני חתימה ולפני URL
+  params = cleanParams(params);
 
   params.sign = sign(secret, params);
 
@@ -160,12 +164,13 @@ async function aliSearch({
     data?.aliexpress_affiliate_product_query_response?.resp_result?.result?.products?.product ||
     [];
 
-  return Array.isArray(products) ? products : [];
+  return { products: Array.isArray(products) ? products : [], raw: data, url };
 }
 
 export default async function handler(req, res) {
   try {
     const query = (req.query.q || "test").toString().trim();
+    const debug = req.query.debug === "1";
 
     const appKey = process.env.ALIEXPRESS_APP_KEY;
     const secret = process.env.ALIEXPRESS_APP_SECRET;
@@ -180,28 +185,25 @@ export default async function handler(req, res) {
       });
     }
 
-    // כדי לא לשבור מה שעבד אצלך: ברירת מחדל נשארת US כמו קודם,
-    // אבל אפשר להעביר ship_to_country מהקליינט.
+    // לשמור תאימות למה שעבד: US ברירת מחדל (אפשר להעביר ב-query)
     const shipTo = (req.query.ship_to_country || "US").toString().toUpperCase();
-
-    // יותר גדול מ-1 כדי שתוכל לבחור “הכי טוב”.
     const pageSize = Math.min(parseInt(req.query.page_size || "30", 10) || 30, 50);
 
-    // אופציונלי פילטרים (אם תרצה בעתיד)
     const deliveryDays = req.query.delivery_days ? String(req.query.delivery_days) : undefined;
     const minPrice = req.query.min_sale_price ? String(req.query.min_sale_price) : undefined;
     const maxPrice = req.query.max_sale_price ? String(req.query.max_sale_price) : undefined;
 
-    // 1) Build spec (AI או fallback)
     const aiSpec = await refineWithAI(query);
     const spec = aiSpec || buildFallbackSpec(query);
 
-    // 2) Run multiple searches and merge
     const queries = (spec.queries && spec.queries.length ? spec.queries : [query]).slice(0, 3);
 
     const all = [];
+    let lastRaw = null;
+    let lastUrl = null;
+
     for (const q of queries) {
-      const list = await aliSearch({
+      const { products, raw, url } = await aliSearch({
         appKey,
         secret,
         trackingId,
@@ -216,10 +218,13 @@ export default async function handler(req, res) {
         deliveryDays,
         sort: spec.sortPreference || "LAST_VOLUME_DESC"
       });
-      all.push(...list);
+
+      lastRaw = raw;
+      lastUrl = url;
+      all.push(...products);
     }
 
-    // 3) Deduplicate
+    // Deduplicate
     const seen = new Set();
     const uniq = [];
     for (const p of all) {
@@ -230,23 +235,30 @@ export default async function handler(req, res) {
     }
 
     if (!uniq.length) {
-      return res.status(404).json({ error: "No product found" });
+      // אם יש בעיה ב-sign/פרמטרים - פה נראה את זה עם debug=1
+      return res.status(404).json({
+        error: "No product found",
+        ...(debug ? { lastUrl, lastRaw } : {})
+      });
     }
 
-    // 4) Filter accessories by exclude list
+    // Filter accessories
     const exclude = (spec.exclude || []).map((x) => String(x).toLowerCase());
     const filtered = uniq.filter((p) => {
       const t = `${p.product_title || ""}`.toLowerCase();
       return !exclude.some((w) => w && t.includes(w));
     });
 
-    // 5) Rerank and take TOP 3
+    // Rerank
     const ranked = (filtered.length ? filtered : uniq)
       .map((p) => ({ p, score: scoreProduct(p, spec) }))
       .sort((a, b) => b.score - a.score);
 
     if (!ranked.length) {
-      return res.status(404).json({ error: "No product found" });
+      return res.status(404).json({
+        error: "No product found",
+        ...(debug ? { lastUrl, lastRaw } : {})
+      });
     }
 
     const top3 = ranked.slice(0, 3).map(({ p, score }) => ({
@@ -258,11 +270,11 @@ export default async function handler(req, res) {
       affiliate_link: p.promotion_link
     }));
 
-    // ✅ תאימות אחורה: מחזיר גם שדות "ישנים" לתוצאה הראשונה
+    // ✅ תאימות אחורה — עדיין מחזיר את המפתח כמו קודם (לתוצאה הראשונה)
     const best = top3[0];
 
     return res.json({
-      // legacy (כמו שהקליינט שלך מצפה היום)
+      // legacy fields (כמו שהיה אצלך)
       title: best.title,
       price: best.price,
       currency: best.currency,
@@ -272,12 +284,7 @@ export default async function handler(req, res) {
       // new: top 3
       results: top3,
 
-      meta: {
-        inputQuery: query,
-        shipTo,
-        usedQueries: queries,
-        pageSize
-      }
+      ...(debug ? { meta: { inputQuery: query, shipTo, usedQueries: queries, pageSize } } : {})
     });
   } catch (err) {
     console.error("search-affiliate failed:", err);
