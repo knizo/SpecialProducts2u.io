@@ -50,7 +50,7 @@ const App: React.FC = () => {
     try {
       const result = await affiliateSearch(searchTerm);
 
-      const mappedProducts: Product[] = list.slice(0, 3).map((item: any, idx: number) => ({
+      const mappedProducts: Product[] = items.slice(0, 3).map((item, idx) => ({
       id: `${Date.now()}-${idx}`,
       title: item.title,
       description: "Top deal from AliExpress",
@@ -64,7 +64,8 @@ const App: React.FC = () => {
 
     setAffiliateResults(mappedProducts);
     setIsAffiliateSearch(true);
-  } catch {
+  } catch (e) {
+    console.error(e);
     alert("AliExpress search failed");
   } finally {
     setAffiliateLoading(false);
