@@ -1,19 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import {
-  ShoppingBag, LayoutGrid, PlusCircle, Search, Gift,
-  Lock, LogOut, Settings, Cloud, CloudOff, AlertTriangle
-} from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ShoppingBag, Gift } from 'lucide-react';
 
 import { Product, ViewState } from './types';
-import { subscribeToProducts, addProduct, removeProduct } from './services/storageService';
-import { isDbConnected } from './services/firebase';
-import { affiliateSearch } from './services/affiliateSearch';
+import { subscribeToProducts } from './services/storageService';
+import { affiliateSearch, type AffiliateItem } from './services/affiliateSearch';
 
 import { ProductCard } from './components/ProductCard';
-import { AdminPanel } from './components/AdminPanel';
-import { AdminSettings } from './components/AdminSettings';
-import { Login } from './components/Login';
-import { Button } from './components/Button';
 
 const App: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
@@ -23,8 +15,7 @@ const App: React.FC = () => {
 
   const [view, setView] = useState<ViewState>('home');
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('All');
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
   const [isLoading, setIsLoading] = useState(true);
   const [dbError, setDbError] = useState<string | null>(null);
 
@@ -40,6 +31,7 @@ const App: React.FC = () => {
         setIsLoading(false);
       }
     );
+
     return () => unsubscribe();
   }, []);
 
@@ -48,47 +40,49 @@ const App: React.FC = () => {
 
     setAffiliateLoading(true);
     try {
-      const result = await affiliateSearch(searchTerm);
+      // affiliateSearch מחזיר תמיד מערך (עד 3)
+      const items: AffiliateItem[] = await affiliateSearch(searchTerm);
 
-      const mappedProducts: Product[] = items.slice(0, 3).map((item, idx) => ({
-      id: `${Date.now()}-${idx}`,
-      title: item.title,
-      description: "Top deal from AliExpress",
-      price: Number(item.price) || 0,
-      currency: item.currency || "USD",
-      imageUrl: item.image,
-      affiliateLink: item.affiliate_link,
-      category: "AliExpress",
-      createdAt: Date.now()
-    }));
+      const mappedProducts: Product[] = items.slice(0, 3).map((item: AffiliateItem, idx: number) => ({
+        id: `${Date.now()}-${idx}`,
+        title: item.title,
+        description: 'Top deal from AliExpress',
+        price: Number(item.price) || 0,
+        currency: item.currency || 'USD',
+        imageUrl: item.image,
+        affiliateLink: item.affiliate_link,
+        category: 'AliExpress',
+        createdAt: Date.now()
+      }));
 
-    setAffiliateResults(mappedProducts);
-    setIsAffiliateSearch(true);
-  } catch (e) {
-    console.error(e);
-    alert("AliExpress search failed");
-  } finally {
-    setAffiliateLoading(false);
-  }
-};
+      setAffiliateResults(mappedProducts);
+      setIsAffiliateSearch(true);
+    } catch (e) {
+      console.error(e);
+      alert('AliExpress search failed');
+    } finally {
+      setAffiliateLoading(false);
+    }
+  };
 
+  // כמו קודם: אם מוחקים את הטקסט, חוזרים למצב רגיל (מוצרים מקומיים)
   useEffect(() => {
     if (!searchTerm) {
       setIsAffiliateSearch(false);
       setAffiliateResults([]);
     }
-  }, [searchTerm, selectedCategory]);
+  }, [searchTerm]);
 
-  const categories = ['All', ...Array.from(new Set(products.map(p => p.category).filter(Boolean) as string[]))];
-
-  const filteredProducts = products.filter(p => {
-    const matchesSearch =
-      p.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.description.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = selectedCategory === 'All' || p.category === selectedCategory;
-    return matchesSearch && matchesCategory;
+  // כמו קודם: חיפוש מסנן מוצרים מקומיים מיד
+  const filteredProducts = products.filter((p) => {
+    const term = searchTerm.toLowerCase();
+    return (
+      p.title.toLowerCase().includes(term) ||
+      p.description.toLowerCase().includes(term)
+    );
   });
 
+  // אם לחצו AliExpress -> מציגים תוצאות affiliate, אחרת מוצרים מקומיים מסוננים
   const displayedProducts = isAffiliateSearch ? affiliateResults : filteredProducts;
 
   return (
@@ -118,7 +112,7 @@ const App: React.FC = () => {
                   disabled={affiliateLoading}
                   className="px-4 rounded-r-full bg-orange-500 text-white text-sm hover:bg-orange-600 disabled:opacity-50"
                 >
-                  {affiliateLoading ? "Searching..." : "AliExpress"}
+                  {affiliateLoading ? 'Searching...' : 'AliExpress'}
                 </button>
               </div>
             </div>
@@ -135,16 +129,12 @@ const App: React.FC = () => {
         ) : displayedProducts.length === 0 ? (
           <div className="text-center py-20">
             <Gift className="mx-auto mb-4 text-brand-500" size={40} />
-            <p>No products found</p>
+            <p>{dbError ? `DB Error: ${dbError}` : 'No products found'}</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {displayedProducts.map(product => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                isAdmin={isAuthenticated}
-              />
+            {displayedProducts.map((product) => (
+              <ProductCard key={product.id} product={product} />
             ))}
           </div>
         )}
