@@ -99,22 +99,31 @@ const App: React.FC = () => {
 
           {view === 'home' && (
             <div className="hidden md:flex flex-1 max-w-xl mx-6 items-center">
-              <div className="relative w-full flex">
-                <input
-                  type="text"
-                  placeholder="Search for amazing deals..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-4 pr-4 py-2 border border-gray-200 rounded-l-full"
-                />
-                <button
-                  onClick={handleAffiliateSearch}
-                  disabled={affiliateLoading}
-                  className="px-4 rounded-r-full bg-orange-500 text-white text-sm hover:bg-orange-600 disabled:opacity-50"
-                >
-                  {affiliateLoading ? 'Searching...' : 'AliExpress'}
-                </button>
-              </div>
+             <form
+  className="relative w-full flex"
+  onSubmit={(e) => {
+    e.preventDefault();          // שלא יעשה רענון עמוד
+    if (affiliateLoading) return;
+    handleAffiliateSearch();     // מפעיל את החיפוש כמו לחיצה על הכפתור
+  }}
+>
+  <input
+    autoComplete="off"
+    type="text"
+    placeholder="Search for amazing deals..."
+    value={searchTerm}
+    onChange={(e) => setSearchTerm(e.target.value)}
+    className="w-full pl-4 pr-4 py-2 border border-gray-200 rounded-l-full"
+  />
+
+  <button
+    type="submit"                // חשוב: כדי ש-Enter יעבוד
+    disabled={affiliateLoading}
+    className="px-4 rounded-r-full bg-orange-500 text-white text-sm hover:bg-orange-600 disabled:opacity-50"
+  >
+    {affiliateLoading ? "Searching..." : "AliExpress"}
+  </button>
+</form>
             </div>
           )}
         </div>
