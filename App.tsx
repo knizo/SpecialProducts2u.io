@@ -50,26 +50,26 @@ const App: React.FC = () => {
     try {
       const result = await affiliateSearch(searchTerm);
 
-      const mapped: Product = {
-        id: Date.now().toString(),
-        title: result.title,
-        description: "Top deal from AliExpress",
-        price: parseFloat(result.price),
-        currency: "USD",
-        imageUrl: result.image,
-        affiliateLink: result.affiliate_link,
-        category: "AliExpress",
-        createdAt: Date.now()
-      };
+      const mappedProducts: Product[] = list.slice(0, 3).map((item: any, idx: number) => ({
+      id: `${Date.now()}-${idx}`,
+      title: item.title,
+      description: "Top deal from AliExpress",
+      price: Number(item.price) || 0,
+      currency: item.currency || "USD",
+      imageUrl: item.image,
+      affiliateLink: item.affiliate_link,
+      category: "AliExpress",
+      createdAt: Date.now()
+    }));
 
-      setAffiliateResults([mapped]);
-      setIsAffiliateSearch(true);
-    } catch {
-      alert("AliExpress search failed");
-    } finally {
-      setAffiliateLoading(false);
-    }
-  };
+    setAffiliateResults(mappedProducts);
+    setIsAffiliateSearch(true);
+  } catch {
+    alert("AliExpress search failed");
+  } finally {
+    setAffiliateLoading(false);
+  }
+};
 
   useEffect(() => {
     if (!searchTerm) {
