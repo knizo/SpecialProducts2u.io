@@ -111,6 +111,8 @@ function scoreProduct(product, spec) {
       score += 4;
     }
   }
+  // 🌀 Noise קטן לגיוון מבוקר (לא פוגע באיכות)
+    score += Math.random() * 5; // 0–5 נקודות
 
   return score;
 }
