@@ -322,10 +322,10 @@ export default async function handler(req, res) {
     }
 
    // בוחרים בצורה מגוונת מתוך הטופ 3
-const chosen = pickWithBias(ranked, 3);
+const chosen = pickWithBias(ranked, 6);
 
 // top 3 נשאר ל-UI
-const top3 = ranked.slice(0, 3).map(({ p, score }) => ({
+const top6 = ranked.slice(0, 6).map(({ p, score }) => ({
   score,
   title: p.product_title,
   price: parseFloat(p.target_sale_price),
@@ -341,7 +341,7 @@ const best = chosen ? {
   currency: chosen.p.target_sale_price_currency,
   image: chosen.p.product_main_image_url,
   affiliate_link: chosen.p.promotion_link
-} : top3[0];
+} : top6[0];
 
 
     return res.json({
@@ -353,7 +353,7 @@ const best = chosen ? {
       affiliate_link: best.affiliate_link,
 
       // new: top 3
-      results: top3,
+      results: top6,
 
       ...(debug ? { meta: { inputQuery: query, shipTo, usedQueries: queries, pageSize } } : {})
     });
