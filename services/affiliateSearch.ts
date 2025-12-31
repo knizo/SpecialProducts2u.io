@@ -1,14 +1,15 @@
 export type AffiliateItem = {
   title: string;
-  price: number | string;
-  currency?: string;
+  price: number;
+  currency: string;
   image: string;
   affiliate_link: string;
-  score?: number;
 };
 
 export async function affiliateSearch(query: string): Promise<AffiliateItem[]> {
-  const res = await fetch(`/api/search-affiliate?q=${encodeURIComponent(query)}`);
+  const res = await fetch(
+    `/api/search-affiliate?q=${encodeURIComponent(query)}`
+  );
 
   if (!res.ok) {
     throw new Error("Affiliate search failed");
@@ -16,13 +17,13 @@ export async function affiliateSearch(query: string): Promise<AffiliateItem[]> {
 
   const data = await res.json();
 
-  // ✅ פורמט חדש: data.results (Top 3)
-  if (Array.isArray(data?.results)) {
-    return data.results.slice(0, 10);
+  // 🔑 זה העיקר: מחזירים את results מה-Backend
+  if (Array.isArray(data.results)) {
+    return data.results; // ← כל ה-5
   }
 
-  // ✅ תאימות אחורה: פורמט ישן של תוצאה אחת
-  if (data?.title && data?.image && data?.affiliate_link != null) {
+  // fallback (תאימות אחורה)
+  if (data.title) {
     return [
       {
         title: data.title,
@@ -34,6 +35,5 @@ export async function affiliateSearch(query: string): Promise<AffiliateItem[]> {
     ];
   }
 
-  // אם משהו חריג חזר
   return [];
 }
