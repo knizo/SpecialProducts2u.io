@@ -115,6 +115,23 @@ function scoreProduct(product, spec) {
   return score;
 }
 
+function pickWithBias(rankedItems, k = 3) {
+  const top = rankedItems.slice(0, k);
+  if (!top.length) return null;
+
+  // משקל יורד: מקום 1 > מקום 2 > מקום 3
+  const weights = top.map((_, i) => k - i);
+  const sum = weights.reduce((a, b) => a + b, 0);
+
+  let r = Math.random() * sum;
+  for (let i = 0; i < top.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return top[i];
+  }
+  return top[0];
+}
+
+
 
 // כרגע AI לא מחובר כדי לא לשבור כלום
 async function refineWithAI() {
@@ -152,6 +169,8 @@ function buildFallbackSpec(query) {
 
   return spec;
 }
+
+
 
 async function aliSearch({
   appKey,
@@ -300,17 +319,28 @@ export default async function handler(req, res) {
       });
     }
 
-    const top3 = ranked.slice(0, 3).map(({ p, score }) => ({
-      score,
-      title: p.product_title,
-      price: parseFloat(p.target_sale_price),
-      currency: p.target_sale_price_currency,
-      image: p.product_main_image_url,
-      affiliate_link: p.promotion_link
-    }));
+   // בוחרים בצורה מגוונת מתוך הטופ 3
+const chosen = pickWithBias(ranked, 3);
 
-    // ✅ תאימות אחורה — עדיין מחזיר את המפתח כמו קודם (לתוצאה הראשונה)
-    const best = top3[0];
+// top 3 נשאר ל-UI
+const top3 = ranked.slice(0, 3).map(({ p, score }) => ({
+  score,
+  title: p.product_title,
+  price: parseFloat(p.target_sale_price),
+  currency: p.target_sale_price_currency,
+  image: p.product_main_image_url,
+  affiliate_link: p.promotion_link
+}));
+
+// תאימות אחורה – מוצר ראשי
+const best = chosen ? {
+  title: chosen.p.product_title,
+  price: parseFloat(chosen.p.target_sale_price),
+  currency: chosen.p.target_sale_price_currency,
+  image: chosen.p.product_main_image_url,
+  affiliate_link: chosen.p.promotion_link
+} : top3[0];
+
 
     return res.json({
       // legacy fields (כמו שהיה אצלך)
