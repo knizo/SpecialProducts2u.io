@@ -56,7 +56,7 @@ function scoreProduct(product, spec) {
 
   // ===== 1️⃣ איכות כללית =====
   if (!Number.isNaN(rating)) {
-    score += rating * 1.5; // איכות היא הכי חשוב
+    score += rating * 2; // איכות היא הכי חשוב
   }
 
   // ===== 2️⃣ ביקוש =====
