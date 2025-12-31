@@ -18,7 +18,7 @@ export async function affiliateSearch(query: string): Promise<AffiliateItem[]> {
 
   // ✅ פורמט חדש: data.results (Top 3)
   if (Array.isArray(data?.results)) {
-    return data.results.slice(0, 6);
+    return data.results.slice(0, 10);
   }
 
   // ✅ תאימות אחורה: פורמט ישן של תוצאה אחת
