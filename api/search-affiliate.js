@@ -45,37 +45,76 @@ function defaultExcludeForQuery() {
 }
 
 function scoreProduct(product, spec) {
-  const title = (product?.product_title || "").toLowerCase();
-  const mustHave = spec.mustHave || [];
-  const niceToHave = spec.niceToHave || [];
-  const exclude = spec.exclude || [];
   let score = 0;
 
-  for (const w of exclude) {
-    if (!w) continue;
-    if (title.includes(String(w).toLowerCase())) score -= 25;
+  const title = (product?.product_title || "").toLowerCase();
+
+  const price = parseFloat(product?.target_sale_price || "0");
+  const rating = parseFloat(product?.evaluate_rate || "0");
+  const volume = parseInt(product?.lastest_volume || "0");
+  const commission = parseFloat(product?.commission_rate || "0");
+
+  // ===== 1️⃣ איכות כללית =====
+  if (!Number.isNaN(rating)) {
+    score += rating * 1.5; // איכות היא הכי חשוב
   }
-  for (const w of mustHave) {
-    if (!w) continue;
-    if (title.includes(String(w).toLowerCase())) score += 12;
+
+  // ===== 2️⃣ ביקוש =====
+  if (!Number.isNaN(volume)) {
+    score += Math.log10(volume + 1) * 12;
   }
-  for (const w of niceToHave) {
-    if (!w) continue;
+
+  // ===== 3️⃣ רווחיות =====
+  if (!Number.isNaN(commission)) {
+    score += commission * 2;
+  }
+
+  // ===== 4️⃣ מחיר הגיוני =====
+  if (price > 0) {
+    if (spec.price?.min != null && price < spec.price.min) score -= 10;
+    if (spec.price?.max != null && price > spec.price.max) score -= 10;
+
+    // מחיר חשוד (זול מדי)
+    if (price < 3) score -= 25;
+  }
+
+  // ===== 5️⃣ ניקיון כותרת (אוניברסלי) =====
+  const globalExclude = [
+    "case",
+    "cover",
+    "replacement",
+    "for ",
+    "compatible with",
+    "refurbished",
+    "used",
+    "copy",
+    "replica",
+    "fake"
+  ];
+
+  for (const w of globalExclude) {
+    if (title.includes(w)) score -= 30;
+  }
+
+  // ===== 6️⃣ must / nice (אם קיימים) =====
+  for (const w of spec.mustHave || []) {
+    if (title.includes(String(w).toLowerCase())) score += 10;
+  }
+
+  for (const w of spec.niceToHave || []) {
     if (title.includes(String(w).toLowerCase())) score += 4;
   }
 
-  const price = parseFloat(product?.target_sale_price);
-  if (spec.price?.min != null && !Number.isNaN(price) && price < spec.price.min) score -= 8;
-  if (spec.price?.max != null && !Number.isNaN(price) && price > spec.price.max) score -= 8;
-
-  if (spec.productType === "wireless_earbuds") {
-    if (title.includes("earbud")) score += 3;
-    if (title.includes("tws")) score += 3;
-    if (title.includes("anc") || title.includes("noise cancel")) score += 3;
+  // ===== 7️⃣ התאמה רכה לסוג מוצר (אופציונלי) =====
+  if (spec.productType) {
+    if (title.includes(spec.productType.replace("_", " "))) {
+      score += 4;
+    }
   }
 
   return score;
 }
+
 
 // כרגע AI לא מחובר כדי לא לשבור כלום
 async function refineWithAI() {
