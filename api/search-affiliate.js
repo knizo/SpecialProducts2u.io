@@ -172,6 +172,28 @@ function buildFallbackSpec(query) {
   return spec;
 }
 
+function simplifyQuery(query) {
+  const words = String(query)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const STOPWORDS = [
+    "for", "with", "and", "or", "to", "of",
+    "best", "cheap", "quality", "new",
+    "iphone", "android"
+  ];
+
+  const filtered = words.filter(w => !STOPWORDS.includes(w));
+
+  return {
+    original: query,
+    short: filtered.slice(0, 3).join(" "),
+    core: filtered.slice(0, 2).join(" ")
+  };
+}
+
 
 
 async function aliSearch({
@@ -229,7 +251,8 @@ async function aliSearch({
 
 export default async function handler(req, res) {
   try {
-    const query = (req.query.q || "test").toString().trim();
+    const rawQuery = (req.query.q || "test").toString().trim();
+    const simplified = simplifyQuery(rawQuery);
     const debug = req.query.debug === "1";
 
     const appKey = process.env.ALIEXPRESS_APP_KEY;
@@ -253,8 +276,8 @@ export default async function handler(req, res) {
     const minPrice = req.query.min_sale_price ? String(req.query.min_sale_price) : undefined;
     const maxPrice = req.query.max_sale_price ? String(req.query.max_sale_price) : undefined;
 
-    const aiSpec = await refineWithAI(query);
-    const spec = aiSpec || buildFallbackSpec(query);
+    const aiSpec = await refineWithAI(simplified.original);
+    const spec = aiSpec || buildFallbackSpec(simplified.core || simplified.short);
 
     const queries = (spec.queries && spec.queries.length ? spec.queries : [query]).slice(0, 3);
 
@@ -283,6 +306,27 @@ export default async function handler(req, res) {
       lastUrl = url;
       all.push(...products);
     }
+
+    // 🔁 FALLBACK: אם יצאו מעט תוצאות – מרחיבים את החיפוש
+if (all.length < 5 && simplified?.short && simplified.short !== simplified.original) {
+  const { products: fallbackProducts, raw, url } = await aliSearch({
+    appKey,
+    secret,
+    trackingId,
+    keywords: simplified.short,   // חיפוש קצר יותר
+    shipTo,
+    pageSize,
+    pageNo: 1,
+    targetCurrency: "USD",
+    targetLanguage: "EN",
+    sort: spec.sortPreference || "LAST_VOLUME_DESC"
+  });
+
+  lastRaw = raw;
+  lastUrl = url;
+  all.push(...fallbackProducts);
+}
+
 
     // Deduplicate
     const seen = new Set();
