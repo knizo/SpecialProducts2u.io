@@ -43,7 +43,7 @@ const App: React.FC = () => {
       // affiliateSearch מחזיר תמיד מערך (עד 3)
       const items: AffiliateItem[] = await affiliateSearch(searchTerm);
 
-      const mappedProducts: Product[] = items.slice(0, 3).map((item: AffiliateItem, idx: number) => ({
+      const mappedProducts: Product[] = items.slice(0, 6).map((item: AffiliateItem, idx: number) => ({
         id: `${Date.now()}-${idx}`,
         title: item.title,
         description: 'Top deal from AliExpress',
