@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import fetch from "node-fetch";
+import { getAIProvider } from "./lib/aiProviders/index.js";
 
 const ALI_ENDPOINT = "https://api-sg.aliexpress.com/sync";
 
@@ -135,10 +136,19 @@ function pickWithBias(rankedItems, k = 3) {
 
 
 
-// כרגע AI לא מחובר כדי לא לשבור כלום
-async function refineWithAI() {
+async function refineWithAI(rawQuery) {
   if (process.env.AI_REFINE_ENABLED !== "1") return null;
-  return null;
+
+  const provider = getAIProvider();
+  if (!provider) return null;
+
+  try {
+    const spec = await provider.refineQuery(rawQuery);
+    return spec; // null if the provider failed — caller already falls back cleanly
+  } catch (err) {
+    console.error("AI refine failed, falling back to heuristic spec:", err.message);
+    return null;
+  }
 }
 
 function buildFallbackSpec(query) {
