@@ -13,7 +13,7 @@ export const generateProductDescription = async (productName: string, category: 
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.6-flash',
       contents: prompt,
     });
 
@@ -29,7 +29,7 @@ export const suggestCategory = async (productName: string): Promise<string> => {
         const prompt = `Suggest a single, short category name (max 2 words) for a product named: "${productName}". Example: "Electronics", "Home Decor", "Mens Fashion". Return ONLY the category name.`;
         
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3.6-flash',
             contents: prompt,
         });
         
