@@ -8,7 +8,7 @@
 
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
-export async function refineQuery(rawQuery, { apiKey, model = "gemini-2.5-flash" } = {}) {
+export async function refineQuery(rawQuery, { apiKey, model = "gemini-3.6-flash" } = {}) {
   if (!apiKey) {
     console.warn("Gemini refineQuery: missing API key, skipping AI refinement.");
     return null;
