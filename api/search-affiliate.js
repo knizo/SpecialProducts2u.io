@@ -1,5 +1,4 @@
 import crypto from "crypto";
-import fetch from "node-fetch";
 import { getAIProvider } from "./lib/aiProviders/index.js";
 
 const ALI_ENDPOINT = "https://api-sg.aliexpress.com/sync";
@@ -45,6 +44,19 @@ function defaultExcludeForQuery() {
   ];
 }
 
+// מילות-מילוי כלליות, חסרות משמעות לצורך התאמת שאילתה-לכותרת
+const FILLER_WORDS = ["for", "with", "and", "or", "to", "of", "best", "cheap", "quality", "new"];
+// stopwords לצורך קיצור שאילתה בלבד (broadening) — גם שמות מותג/פלטפורמה, כי שם הם רק "רעש" שמבזבז תקציב מילים
+const SIMPLIFY_STOPWORDS = [...FILLER_WORDS, "iphone", "android"];
+
+function tokenize(str) {
+  return String(str || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
 function scoreProduct(product, spec) {
   let score = 0;
 
@@ -54,6 +66,15 @@ function scoreProduct(product, spec) {
   const rating = parseFloat(product?.evaluate_rate || "0");
   const volume = parseInt(product?.lastest_volume || "0");
   const commission = parseFloat(product?.commission_rate || "0");
+
+  // ===== 0️⃣ התאמה לשאילתה המקורית — האיתות הכי חשוב לדיוק =====
+  // בלי זה, כותרת לא-קשורה עם rating/volume גבוהים יכולה לנצח מוצר מדויק.
+  const queryWords = tokenize(spec.rawQuery).filter((w) => !FILLER_WORDS.includes(w));
+  if (queryWords.length) {
+    const titleWords = new Set(tokenize(title));
+    const matched = queryWords.filter((w) => titleWords.has(w)).length;
+    score += (matched / queryWords.length) * 30;
+  }
 
   // ===== 1️⃣ איכות כללית =====
   if (!Number.isNaN(rating)) {
@@ -79,19 +100,11 @@ function scoreProduct(product, spec) {
     if (price < 3) score -= 25;
   }
 
-  // ===== 5️⃣ ניקיון כותרת (אוניברסלי) =====
-  const globalExclude = [
-    "case",
-    "cover",
-    "replacement",
-    "for ",
-    "compatible with",
-    "refurbished",
-    "used",
-    "copy",
-    "replica",
-    "fake"
-  ];
+  // ===== 5️⃣ ניקיון כותרת — רק סימנים שליליים אוניברסליים =====
+  // "case"/"cover"/"for "/"compatible with" הוסרו מכאן: הן מחרוזות נפוצות בכותרות
+  // לגיטימיות לגמרי (למשל "Gift for Her", "Perfect for daily use") והענישו תוצאות
+  // תקינות. סינון אביזרים ספציפי לשאילתה עדיין קורה למטה, דרך spec.exclude.
+  const globalExclude = ["refurbished", "used", "copy", "replica", "fake"];
 
   for (const w of globalExclude) {
     if (title.includes(w)) score -= 30;
@@ -112,8 +125,8 @@ function scoreProduct(product, spec) {
       score += 4;
     }
   }
-  // 🌀 Noise קטן לגיוון מבוקר (לא פוגע באיכות)
-    score += Math.random() * 5; // 0–5 נקודות
+  // 🌀 רעש קטן לגיוון — קטן מספיק שלא יהפוך תוצאות רחוקות לתוצאות קרובות
+  score += Math.random() * 2;
 
   return score;
 }
@@ -137,7 +150,8 @@ function pickWithBias(rankedItems, k = 3) {
 
 
 async function refineWithAI(rawQuery) {
-  if (process.env.AI_REFINE_ENABLED !== "1") return null;
+  // ברירת מחדל: מופעל. אפשר לכבות עם AI_REFINE_ENABLED=0 (למשל לחיסכון בעלויות).
+  if (process.env.AI_REFINE_ENABLED === "0") return null;
 
   const provider = getAIProvider();
   if (!provider) return null;
@@ -164,7 +178,9 @@ function buildFallbackSpec(query) {
     niceToHave: [],
     exclude: defaultExcludeForQuery(),
     price: isAirpodsLike ? { min: 20, max: 250 } : null,
-    sortPreference: "LAST_VOLUME_DESC"
+    // undefined -> AliExpress ישתמש במיון הרלוונטיות הפנימי שלו במקום להיכפות
+    // תמיד למיון לפי וליום מכירות; הדירוג שלנו (scoreProduct) כבר מביא volume בחשבון.
+    sortPreference: undefined
   };
 
   if (isAirpodsLike) {
@@ -183,19 +199,7 @@ function buildFallbackSpec(query) {
 }
 
 function simplifyQuery(query) {
-  const words = String(query)
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, "")
-    .split(/\s+/)
-    .filter(Boolean);
-
-  const STOPWORDS = [
-    "for", "with", "and", "or", "to", "of",
-    "best", "cheap", "quality", "new",
-    "iphone", "android"
-  ];
-
-  const filtered = words.filter(w => !STOPWORDS.includes(w));
+  const filtered = tokenize(query).filter((w) => !SIMPLIFY_STOPWORDS.includes(w));
 
   return {
     original: query,
@@ -286,10 +290,18 @@ export default async function handler(req, res) {
     const minPrice = req.query.min_sale_price ? String(req.query.min_sale_price) : undefined;
     const maxPrice = req.query.max_sale_price ? String(req.query.max_sale_price) : undefined;
 
-    const aiSpec = await refineWithAI(simplified.original);
-    const spec = aiSpec || buildFallbackSpec(simplified.core || simplified.short);
+    const aiSpec = await refineWithAI(rawQuery);
+    // חשוב: השאילתה המלאה של המשתמש, לא simplified.core/short (2-3 מילים בלבד) —
+    // קיצוץ מוקדם היה זורק את רוב הספציפיות של החיפוש. simplified.short/core עדיין
+    // משמשים רק כהרחבה (widening) אם יוצאות מעט תוצאות, ראה למטה.
+    const spec = aiSpec || buildFallbackSpec(rawQuery);
+    spec.rawQuery = rawQuery; // ל-scoreProduct, כדי לדרג לפי התאמת שאילתה-לכותרת
 
-    const queries = (spec.queries && spec.queries.length ? spec.queries : [query]).slice(0, 3);
+    console.log(
+      `[search-affiliate] q="${rawQuery}" usedAI=${!!aiSpec} queries=${JSON.stringify(spec.queries)}`
+    );
+
+    const queries = (spec.queries && spec.queries.length ? spec.queries : [rawQuery]).slice(0, 3);
 
     const all = [];
     let lastRaw = null;
@@ -309,7 +321,7 @@ export default async function handler(req, res) {
         minPrice,
         maxPrice,
         deliveryDays,
-        sort: spec.sortPreference || "LAST_VOLUME_DESC"
+        sort: spec.sortPreference || undefined
       });
 
       lastRaw = raw;
@@ -329,7 +341,7 @@ if (all.length < 5 && simplified?.short && simplified.short !== simplified.origi
     pageNo: 1,
     targetCurrency: "USD",
     targetLanguage: "EN",
-    sort: spec.sortPreference || "LAST_VOLUME_DESC"
+    sort: spec.sortPreference || undefined
   });
 
   lastRaw = raw;
@@ -409,7 +421,7 @@ const best = chosen ? {
       // new: top 3
       results: top6,
 
-      ...(debug ? { meta: { inputQuery: query, shipTo, usedQueries: queries, pageSize } } : {})
+      ...(debug ? { meta: { inputQuery: rawQuery, usedAI: !!aiSpec, shipTo, usedQueries: queries, pageSize } } : {})
     });
   } catch (err) {
     console.error("search-affiliate failed:", err);
