@@ -31,12 +31,21 @@ Return ONLY valid JSON (no markdown fences, no explanation) in exactly this shap
 
 Rules:
 - Never drop the core product noun from "queries" (this was a bug before — don't repeat it).
+- Write "queries" as concise AliExpress-style keyword phrases (roughly 2-6 words: product
+  noun + key attributes), not full sentences and not the user's marketing-style wording
+  verbatim — AliExpress's own search matches best against short keyword phrases, the same
+  way a seller would title a listing.
 - Keep "exclude" specific to this query's false positives, not a generic list.
 - If the query is vague, make reasonable assumptions but keep "mustHave" short.
 
 User query: "${rawQuery}"`;
 
   const url = `${GEMINI_ENDPOINT}/${model}:generateContent?key=${apiKey}`;
+
+  // AI refinement now runs by default on every search — a hung request must never
+  // stall the whole route, so bound it explicitly.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
 
   let res;
   try {
@@ -49,11 +58,14 @@ User query: "${rawQuery}"`;
           temperature: 0.2,
           responseMimeType: "application/json"
         }
-      })
+      }),
+      signal: controller.signal
     });
   } catch (err) {
-    console.error("Gemini refineQuery: network error", err.message);
+    console.error("Gemini refineQuery: network/timeout error", err.message);
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 
   if (!res.ok) {
@@ -96,6 +108,8 @@ function normalizeSpec(parsed, rawQuery) {
       parsed.price && typeof parsed.price === "object"
         ? { min: parsed.price.min ?? null, max: parsed.price.max ?? null }
         : null,
-    sortPreference: "LAST_VOLUME_DESC"
+    // undefined -> תן ל-AliExpress להשתמש במיון הרלוונטיות שלו; scoreProduct כבר
+    // מדרג לפי volume בעצמו, אין צורך לכפות מיון וליום ברמת ה-API request.
+    sortPreference: undefined
   };
 }
