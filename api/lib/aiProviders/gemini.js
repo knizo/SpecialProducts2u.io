@@ -1,6 +1,7 @@
 // api/lib/aiProviders/gemini.js
 //
 // Gemini implementation of the "refineQuery" contract.
+
 // Turns a raw user search string into a structured spec the
 // AliExpress search logic can use directly (replacing the old
 // simplifyQuery/buildFallbackSpec word-truncation approach).
