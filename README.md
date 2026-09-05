@@ -66,15 +66,28 @@ Preview / Development). Nothing secret should ever be committed to the repo.
 | `ALIEXPRESS_APP_SECRET` | App Secret used to MD5-sign every API request. **Server-only, never expose to the client.** |
 | `ALIEXPRESS_TRACKING_ID` | Your Affiliate "Tracking ID" (a.k.a. PID sub-channel) — this is what attributes sales/commission back to you. Every generated link is embedded with this ID. |
 
-### AI / Gemini (required for AI query refinement + admin auto-fill)
+### AI query refinement (backend, `/api/search-affiliate`)
+
+Query refinement runs through a pluggable provider switchboard
+(`api/lib/aiProviders/index.js`) — switching models is just an env var, no code change.
+**Groq is the default** (it's free and the spec-extraction task here doesn't need a frontier
+model); Gemini is available as an alternative today, and adding OpenAI/ChatGPT or any other
+provider is a small drop-in file (see the comment at the top of `index.js`).
 
 | Variable | Description |
 |---|---|
-| `API_KEY` | Gemini key used by the **frontend** admin panel (`services/geminiService.ts`) for description/category generation. |
-| `GEMINI_API_KEY` | Gemini key used by the **backend** search route (`api/lib/aiProviders/gemini.js`) for query refinement. Can be the same key as `API_KEY`. |
-| `AI_PROVIDER` | Which AI backend to use for query refinement. Default: `gemini`. |
-| `AI_REFINE_ENABLED` | **Enabled by default.** Set to `0` to disable AI-based query refinement in `/api/search-affiliate` (falls back to the heuristic spec builder) — e.g. to cut Gemini cost/latency. Requires `GEMINI_API_KEY` to actually take effect; silently no-ops (falls back) if that key is missing. |
+| `AI_PROVIDER` | Which backend to use for query refinement. Default: `groq`. Set to `gemini` to switch. |
+| `GROQ_API_KEY` | API key for [Groq](https://console.groq.com) — used when `AI_PROVIDER=groq` (the default). Free tier available. |
+| `GROQ_MODEL` | Optional override, default `llama-3.3-70b-versatile`. |
+| `GEMINI_API_KEY` | Gemini key used when `AI_PROVIDER=gemini`. |
 | `GEMINI_MODEL` | Optional override, default `gemini-3.6-flash`. |
+| `AI_REFINE_ENABLED` | **Enabled by default.** Set to `0` to disable AI-based query refinement in `/api/search-affiliate` (falls back to the heuristic spec builder) — e.g. to cut cost/latency. Silently no-ops (falls back) if the active provider's API key is missing. |
+
+### AI admin auto-fill (frontend, admin panel)
+
+| Variable | Description |
+|---|---|
+| `API_KEY` | Gemini key used by the **frontend** admin panel (`services/geminiService.ts`) for description/category generation. Independent of the backend search refinement above — currently Gemini-only, since it calls the `@google/genai` SDK directly rather than going through the provider switchboard. |
 
 ### Firebase (optional — falls back to per-browser `localStorage` if unset)
 

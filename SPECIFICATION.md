@@ -89,18 +89,34 @@ Both the AI path (Gemini) and the no-AI fallback path produce the same **spec** 
 }
 ```
 
-### 4a. AI path — `api/lib/aiProviders/gemini.js`
+### 4a. AI path — provider switchboard
 
-- Runs by default on every search unless `AI_REFINE_ENABLED=0`, or no `GEMINI_API_KEY` is
-  configured, or `AI_PROVIDER` names an unregistered provider.
-- Sends the raw query to `gemini-3.6-flash` (overridable via `GEMINI_MODEL`) with a prompt
-  instructing it to return only the JSON spec above, with `responseMimeType: "application/json"`
-  and `temperature: 0.2`.
-- Bounded to an 8-second timeout (`AbortController`); any network error, non-2xx response, empty
-  response, or JSON parse failure returns `null` — the caller then falls back to the heuristic
-  spec. A hung or failing Gemini call must never fail the whole search.
-- A successful response is passed through `normalizeSpec()`, which defensively coerces every
-  field to its expected type/shape so a slightly malformed AI response can't crash the route.
+The prompt (`buildRefinePrompt`) and the response normalization (`normalizeSpec`) live in
+[api/lib/aiProviders/shared.js](api/lib/aiProviders/shared.js) and are shared by every provider,
+so they all produce byte-for-byte the same spec shape regardless of which model answered.
+`search-affiliate.js` never talks to a provider directly — it calls `getAIProvider()`
+([api/lib/aiProviders/index.js](api/lib/aiProviders/index.js)), which reads `AI_PROVIDER`
+(default `groq`) and dispatches to the matching module.
+
+Every provider call:
+- Runs by default on every search unless `AI_REFINE_ENABLED=0`, or the active provider's API key
+  is missing, or `AI_PROVIDER` names an unregistered provider.
+- Is bounded to an 8-second timeout (`AbortController`); any network error, non-2xx response,
+  empty response, or JSON parse failure returns `null` — the caller then falls back to the
+  heuristic spec (§4b). A hung or failing AI call must never fail the whole search.
+
+**Groq** ([api/lib/aiProviders/groq.js](api/lib/aiProviders/groq.js)) — default provider, free
+tier. OpenAI-compatible chat-completions endpoint (`api.groq.com/openai/v1/chat/completions`),
+model `llama-3.3-70b-versatile` (overridable via `GROQ_MODEL`), `response_format:
+{ type: "json_object" }`, `temperature: 0.2`. Key: `GROQ_API_KEY`.
+
+**Gemini** ([api/lib/aiProviders/gemini.js](api/lib/aiProviders/gemini.js)) — alternative
+provider, select with `AI_PROVIDER=gemini`. Model `gemini-3.6-flash` (overridable via
+`GEMINI_MODEL`), `responseMimeType: "application/json"`, `temperature: 0.2`. Key:
+`GEMINI_API_KEY`.
+
+Switching providers, or adding a new one (OpenAI/ChatGPT, etc.), never touches
+`search-affiliate.js` or the ranking logic — see §4c.
 
 ### 4b. Heuristic fallback — `buildFallbackSpec()`
 
@@ -117,9 +133,10 @@ Both the AI path (Gemini) and the no-AI fallback path produce the same **spec** 
 ### 4c. Adding a new AI provider
 
 Per the comment in [api/lib/aiProviders/index.js](api/lib/aiProviders/index.js): create
-`api/lib/aiProviders/<name>.js` exporting `refineQuery(rawQuery, opts) => Promise<spec|null>`
-with the same normalized shape as `gemini.js`, register it in the `PROVIDERS` map, and set
-`AI_PROVIDER=<name>`. No other code changes are required.
+`api/lib/aiProviders/<name>.js` exporting `refineQuery(rawQuery, opts) => Promise<spec|null>`,
+built on `buildRefinePrompt`/`normalizeSpec` from `shared.js` (see `groq.js` or `gemini.js` for
+the pattern), register it in the `PROVIDERS` map, and set `AI_PROVIDER=<name>`. No other code
+changes are required.
 
 ## 5. Ranking algorithm — `scoreProduct()`
 

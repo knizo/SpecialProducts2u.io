@@ -31,7 +31,7 @@ catalog on the side.
 │  ├─ getAIProvider() ────────────┐  │   │   localStorage if VITE_     │
 │  │   (api/lib/aiProviders)      │  │   │   FIREBASE_* unset)         │
 │  │                              ▼  │   └───────────────────────────┘
-│  │                  Gemini API (query refinement)
+│  │           Groq (default) or Gemini API (query refinement)
 │  │                              │
 │  └─ aliSearch() (MD5-signed) ───┼──▶ AliExpress Open Platform API
 │                                 │       (aliexpress.affiliate.product.query)
@@ -49,9 +49,10 @@ catalog on the side.
    1. Reads `ALIEXPRESS_APP_KEY` / `ALIEXPRESS_APP_SECRET` / `ALIEXPRESS_TRACKING_ID` from env;
       500s if any are missing.
    2. Calls `refineWithAI(rawQuery)`, which delegates to
-      [api/lib/aiProviders/index.js](api/lib/aiProviders/index.js) →
-      [gemini.js](api/lib/aiProviders/gemini.js) unless `AI_REFINE_ENABLED=0` or no
-      `GEMINI_API_KEY` is set. Gemini returns a structured **spec** (see
+      [api/lib/aiProviders/index.js](api/lib/aiProviders/index.js) → whichever provider
+      `AI_PROVIDER` selects (default [groq.js](api/lib/aiProviders/groq.js), or
+      [gemini.js](api/lib/aiProviders/gemini.js)), unless `AI_REFINE_ENABLED=0` or that
+      provider's API key is missing. The provider returns a structured **spec** (see
       [SPECIFICATION.md](SPECIFICATION.md)) or `null` on any failure/timeout (8s bound).
    3. Falls back to `buildFallbackSpec()` (heuristic, no AI) if the AI spec is `null`.
    4. Runs up to 3 AliExpress queries from `spec.queries`, MD5-signing each request
