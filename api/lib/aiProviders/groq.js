@@ -8,7 +8,7 @@ import { buildRefinePrompt, normalizeSpec } from "./shared.js";
 
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 
-export async function refineQuery(rawQuery, { apiKey, model = "llama-3.3-70b-versatile" } = {}) {
+export async function refineQuery(rawQuery, { apiKey, model = "llama-3.1-8b-instant" } = {}) {
   if (!apiKey) {
     console.warn("Groq refineQuery: missing API key, skipping AI refinement.");
     return null;

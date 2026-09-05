@@ -107,8 +107,10 @@ Every provider call:
 
 **Groq** ([api/lib/aiProviders/groq.js](api/lib/aiProviders/groq.js)) — default provider, free
 tier. OpenAI-compatible chat-completions endpoint (`api.groq.com/openai/v1/chat/completions`),
-model `llama-3.3-70b-versatile` (overridable via `GROQ_MODEL`), `response_format:
-{ type: "json_object" }`, `temperature: 0.2`. Key: `GROQ_API_KEY`.
+model `llama-3.1-8b-instant` (overridable via `GROQ_MODEL`), `response_format:
+{ type: "json_object" }`, `temperature: 0.2`. Key: `GROQ_API_KEY`. Groq's enabled-model lineup
+varies by key/org and changes over time — a `model_not_found` response means the configured
+`GROQ_MODEL` isn't enabled for that key (see README for how to list what is).
 
 **Gemini** ([api/lib/aiProviders/gemini.js](api/lib/aiProviders/gemini.js)) — alternative
 provider, select with `AI_PROVIDER=gemini`. Model `gemini-3.6-flash` (overridable via
