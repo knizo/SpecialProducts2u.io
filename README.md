@@ -78,7 +78,7 @@ provider is a small drop-in file (see the comment at the top of `index.js`).
 |---|---|
 | `AI_PROVIDER` | Which backend to use for query refinement. Default: `groq`. Set to `gemini` to switch. |
 | `GROQ_API_KEY` | API key for [Groq](https://console.groq.com) — used when `AI_PROVIDER=groq` (the default). Free tier available. |
-| `GROQ_MODEL` | Optional override, default `llama-3.1-8b-instant`. Groq's model lineup changes fairly often — if you get a `model_not_found` error, list what's actually enabled for your key with `curl -s https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY"` and pick one from there (e.g. `llama-3.3-70b-versatile` for higher quality, if available). |
+| `GROQ_MODEL` | Optional override, default `openai/gpt-oss-20b`. Groq's model lineup changes fairly often — if you get a `model_not_found` error, check console.groq.com's Playground (Models list) or `curl -s https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY"` for what's actually enabled for your key, and set `GROQ_MODEL` to one of those (e.g. `openai/gpt-oss-120b` for higher quality/slower). |
 | `GEMINI_API_KEY` | Gemini key used when `AI_PROVIDER=gemini`. |
 | `GEMINI_MODEL` | Optional override, default `gemini-3.6-flash`. |
 | `AI_REFINE_ENABLED` | **Enabled by default.** Set to `0` to disable AI-based query refinement in `/api/search-affiliate` (falls back to the heuristic spec builder) — e.g. to cut cost/latency. Silently no-ops (falls back) if the active provider's API key is missing. |
