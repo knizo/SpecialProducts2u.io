@@ -154,9 +154,11 @@ is a sum of:
 
 | Signal | Weight | Notes |
 |---|---|---|
-| Query-word match in title | `(matched / total) * 30` | Filler words (`for`, `with`, `and`, ...) excluded from `spec.rawQuery` before matching. Highest-weighted signal — prevents an unrelated high-rated product from beating an accurate match. |
+| Query-word match in title | `(matched / total) * 55` | Filler words (`for`, `with`, `and`, ...) excluded from `spec.rawQuery` before matching. Dominant signal by design — prevents an unrelated high-volume product from beating an accurate match. |
+| Matched token containing a digit | `+10` each | Model codes / part numbers (`gs3`, `rtx4090`, `2420006asg0000`) are near-conclusive evidence of the right item, unlike generic words like "bushing" that match thousands of listings. |
+| Low-relevance penalty | `-40` | Applied when the query has ≥3 meaningful words but under 34% of them appear in the title. This is what stops a popular-but-wrong listing from outranking a real, low-volume match. Gated on word count so short generic queries aren't punished for matching broadly. |
 | Rating (`evaluate_rate`) | `rating * 2` | |
-| Sales volume (`lastest_volume`) | `log10(volume + 1) * 12` | Log-scaled so viral bestsellers don't totally dominate. |
+| Sales volume (`lastest_volume`) | `log10(volume + 1) * 8` | Log-scaled so viral bestsellers don't dominate; deliberately weighted below relevance. |
 | Commission rate | `commission * 2` | Rewards more profitable listings. |
 | Price out of `spec.price` band | `-10` each side | Only applied if `spec.price.min`/`max` set. |
 | Suspiciously cheap (`price < 3`) | `-25` | Filters likely-mislabeled/junk listings. |
@@ -166,17 +168,23 @@ is a sum of:
 | `spec.productType` phrase present | `+4` | |
 | Random jitter | `+0..2` | Small enough to not reorder distant results; adds variety among near-ties. |
 
-After ranking, `pickWithBias(ranked, k=3)` selects the legacy single "best" product via a
-weight-decreasing random draw over the top 3 (weights `3, 2, 1`) — biased toward, but not
-guaranteed to be, the #1 result. The `results` array returned to the client is simply the top 6
-by score, unaffected by this bias.
+After ranking, `pickWithBias(ranked, k=6)` selects the legacy single "best" product via a
+weight-decreasing random draw over the top entries — biased toward, but not guaranteed to be,
+the #1 result. The `results` array is simply the top 6 by score, unaffected by this bias.
+Callers that need accuracy over variety (the Telegram bot, §8) use `results[0]` instead.
 
 ## 6. Result-set widening
 
 If the primary query (+ up to 2 AI-suggested alternates) returns fewer than 5 total products,
-the route re-queries once more using a shortened keyword string (`simplifyQuery`: strips filler
-words and brand/platform stopwords like `iphone`/`android`, keeps the first 3 tokens) to widen
-the net before giving up.
+the search re-queries once more using a shortened keyword string (`simplifyQuery`) to widen the
+net before giving up. `simplifyQuery` strips filler words and brand/platform stopwords
+(`iphone`/`android`), then keeps the **4 most distinctive** surviving tokens — ranked by "has a
+digit" first (model/part codes), then word length — restored to their original order.
+
+> It deliberately does *not* just keep the first N words: for a query like `"Original Lower
+> Suspension Rubber Bushing ... GAC Trumpchi GS3 GE3"` that kept `"original lower suspension"`
+> and discarded both the product noun and every brand/model code, widening the search into
+> completely unrelated territory.
 
 ## 7. Admin panel behavior
 
@@ -196,3 +204,62 @@ the net before giving up.
 
 > See [TASKS.md](TASKS.md) for known gaps between this spec and the current `App.tsx` wiring
 > (the admin/login/settings views are not currently reachable from the rendered UI).
+
+## 8. Telegram group bot — `/api/telegram-webhook`
+
+A webhook-driven bot ([api/telegram-webhook.js](api/telegram-webhook.js)) that sits in a
+Telegram group and answers product requests with a tracked affiliate link. Setup steps are in
+[README.md](README.md#telegram-bot-setup).
+
+### 8a. When it responds
+
+The bot is **silent by default** — it ignores all ordinary group chatter. `extractQuery()`
+returns a query only for:
+
+| Form | Example | Requires privacy mode off? |
+|---|---|---|
+| `/deal`, `/find`, `/ali` command | `/deal wireless earbuds` | No — commands always reach the bot |
+| `TELEGRAM_TRIGGER` prefix | `deal: wireless earbuds` (with `TELEGRAM_TRIGGER=deal:`) | Yes |
+
+Commands also match Telegram's group form with the bot name appended
+(`/deal@MyBot wireless earbuds`). A trigger with no query after it (`/deal` alone) is ignored
+rather than searching for an empty string.
+
+Telegram bots run with **Group Privacy ON by default**, meaning a bot only receives commands,
+@-mentions, and replies to itself — which is why the commands work with no setup while a bare
+trigger word needs privacy mode turned off in BotFather.
+
+Also ignored: non-POST requests (405), messages from other bots, updates with no text/caption,
+and any message where the secret token doesn't match (401).
+
+### 8b. What it replies
+
+On a successful search, one message containing the title (HTML-escaped, bolded), the price and
+currency, and the raw affiliate URL on its own line so Telegram renders a link preview:
+
+```
+🛍 <b>Product Title</b>
+
+💰 12.34 USD
+
+https://s.click.aliexpress.com/...
+```
+
+It sends `results[0]` — the strictly top-ranked product — **not** the randomized `best` the
+website uses, because the whole point in the group is to return the exact item asked for.
+
+Failure replies: `🔍 No matching product found for: <query>` when the search yields nothing,
+and `⚠️ Search is not configured correctly right now.` when the AliExpress env vars are missing.
+
+### 8c. Response-code contract
+
+The webhook **always returns HTTP 200** once past the secret check, including on internal
+errors. Telegram retries any update that gets a non-2xx or times out, which would post
+duplicate replies into the group; failures are logged instead of surfaced as a status code.
+
+### 8d. Ship-to country
+
+Unlike the website (which reads the visitor's real country from `x-vercel-ip-country`, §3), the
+webhook request comes from Telegram's servers, not the person typing — so there's no IP to
+geolocate. The searched country comes from `TELEGRAM_SHIP_TO` (default `US`) and should be set
+to the group's actual market.

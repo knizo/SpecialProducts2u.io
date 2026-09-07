@@ -1,0 +1,461 @@
+// api/lib/affiliateSearch.js
+//
+// Core AliExpress affiliate search: AI query refinement -> AliExpress product query
+// -> dedupe -> accessory filter -> rerank. Extracted out of the HTTP route so that
+// every entry point (the web route /api/search-affiliate, the Telegram bot, anything
+// added later) shares one ranking implementation instead of copies that drift apart.
+//
+// This module does no HTTP-response work of its own — it returns a plain result object
+// and lets each caller shape its own output.
+
+import crypto from "crypto";
+import { getAIProvider } from "./aiProviders/index.js";
+
+const ALI_ENDPOINT = "https://api-sg.aliexpress.com/sync";
+
+function cleanParams(obj) {
+  // מוחק מפתחות עם undefined/null/"" כדי שלא יישלחו בכלל
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined || v === null || v === "") continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+function sign(secret, params) {
+  const sorted = Object.keys(params)
+    .sort()
+    .map((k) => `${k}${params[k]}`)
+    .join("");
+
+  return crypto
+    .createHash("md5")
+    .update(secret + sorted + secret)
+    .digest("hex")
+    .toUpperCase();
+}
+
+// מסנן אביזרים נפוצים (קייסים וכו')
+function defaultExcludeForQuery() {
+  return [
+    "case",
+    "cover",
+    "silicone",
+    "replacement",
+    "strap",
+    "ear tips",
+    "earpads",
+    "for airpods",
+    "compatible with",
+    "charging case",
+    "skin",
+    "protector"
+  ];
+}
+
+// מילות-מילוי כלליות, חסרות משמעות לצורך התאמת שאילתה-לכותרת
+const FILLER_WORDS = ["for", "with", "and", "or", "to", "of", "best", "cheap", "quality", "new"];
+// stopwords לצורך קיצור שאילתה בלבד (broadening) — גם שמות מותג/פלטפורמה, כי שם הם רק "רעש" שמבזבז תקציב מילים
+const SIMPLIFY_STOPWORDS = [...FILLER_WORDS, "iphone", "android"];
+
+function tokenize(str) {
+  return String(str || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function scoreProduct(product, spec) {
+  let score = 0;
+
+  const title = (product?.product_title || "").toLowerCase();
+
+  const price = parseFloat(product?.target_sale_price || "0");
+  const rating = parseFloat(product?.evaluate_rate || "0");
+  const volume = parseInt(product?.lastest_volume || "0");
+  const commission = parseFloat(product?.commission_rate || "0");
+
+  // ===== 0️⃣ התאמה לשאילתה המקורית — האיתות הכי חשוב לדיוק =====
+  // בלי זה, כותרת לא-קשורה עם rating/volume גבוהים יכולה לנצח מוצר מדויק.
+  const queryWords = tokenize(spec.rawQuery).filter((w) => !FILLER_WORDS.includes(w));
+  if (queryWords.length) {
+    const titleWords = new Set(tokenize(title));
+    const matched = queryWords.filter((w) => titleWords.has(w));
+    const matchRatio = matched.length / queryWords.length;
+    score += matchRatio * 55;
+
+    // Tokens with a digit (model codes / part numbers, e.g. "gs3", "rtx4090") are the
+    // strongest possible signal that this is literally the right item — a generic
+    // word like "bushing" or "case" matches thousands of unrelated products, but a
+    // model code matching is close to conclusive. Reward it well beyond the ratio above.
+    const matchedCodes = matched.filter((w) => /\d/.test(w));
+    score += matchedCodes.length * 10;
+
+    // A query with several meaningful words where most DON'T appear in the title is
+    // very likely the wrong product, no matter how well it sells elsewhere — this is
+    // what stops an unrelated bestseller from beating a real (but low-volume) match.
+    // Gated on queryWords.length so short/generic queries (1-2 words) aren't penalized
+    // just for legitimately matching broadly.
+    if (queryWords.length >= 3 && matchRatio < 0.34) {
+      score -= 40;
+    }
+  }
+
+  // ===== 1️⃣ איכות כללית =====
+  if (!Number.isNaN(rating)) {
+    score += rating * 2; // איכות היא הכי חשוב
+  }
+
+  // ===== 2️⃣ ביקוש =====
+  if (!Number.isNaN(volume)) {
+    score += Math.log10(volume + 1) * 8;
+  }
+
+  // ===== 3️⃣ רווחיות =====
+  if (!Number.isNaN(commission)) {
+    score += commission * 2;
+  }
+
+  // ===== 4️⃣ מחיר הגיוני =====
+  if (price > 0) {
+    if (spec.price?.min != null && price < spec.price.min) score -= 10;
+    if (spec.price?.max != null && price > spec.price.max) score -= 10;
+
+    // מחיר חשוד (זול מדי)
+    if (price < 3) score -= 25;
+  }
+
+  // ===== 5️⃣ ניקיון כותרת — רק סימנים שליליים אוניברסליים =====
+  // "case"/"cover"/"for "/"compatible with" הוסרו מכאן: הן מחרוזות נפוצות בכותרות
+  // לגיטימיות לגמרי (למשל "Gift for Her", "Perfect for daily use") והענישו תוצאות
+  // תקינות. סינון אביזרים ספציפי לשאילתה עדיין קורה למטה, דרך spec.exclude.
+  const globalExclude = ["refurbished", "used", "copy", "replica", "fake"];
+
+  for (const w of globalExclude) {
+    if (title.includes(w)) score -= 30;
+  }
+
+  // ===== 6️⃣ must / nice (אם קיימים) =====
+  for (const w of spec.mustHave || []) {
+    if (title.includes(String(w).toLowerCase())) score += 10;
+  }
+
+  for (const w of spec.niceToHave || []) {
+    if (title.includes(String(w).toLowerCase())) score += 4;
+  }
+
+  // ===== 7️⃣ התאמה רכה לסוג מוצר (אופציונלי) =====
+  if (spec.productType) {
+    if (title.includes(spec.productType.replace("_", " "))) {
+      score += 4;
+    }
+  }
+  // 🌀 רעש קטן לגיוון — קטן מספיק שלא יהפוך תוצאות רחוקות לתוצאות קרובות
+  score += Math.random() * 2;
+
+  return score;
+}
+
+function pickWithBias(rankedItems, k = 3) {
+  const top = rankedItems.slice(0, k);
+  if (!top.length) return null;
+
+  // משקל יורד: מקום 1 > מקום 2 > מקום 3
+  const weights = top.map((_, i) => k - i);
+  const sum = weights.reduce((a, b) => a + b, 0);
+
+  let r = Math.random() * sum;
+  for (let i = 0; i < top.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return top[i];
+  }
+  return top[0];
+}
+
+async function refineWithAI(rawQuery) {
+  // ברירת מחדל: מופעל. אפשר לכבות עם AI_REFINE_ENABLED=0 (למשל לחיסכון בעלויות).
+  if (process.env.AI_REFINE_ENABLED === "0") return null;
+
+  const provider = getAIProvider();
+  if (!provider) return null;
+
+  try {
+    const spec = await provider.refineQuery(rawQuery);
+    return spec; // null if the provider failed — caller already falls back cleanly
+  } catch (err) {
+    console.error("AI refine failed, falling back to heuristic spec:", err.message);
+    return null;
+  }
+}
+
+function buildFallbackSpec(query) {
+  const q = String(query || "").trim();
+  const lower = q.toLowerCase();
+  const isAirpodsLike =
+    lower.includes("airpods") || lower.includes("air pods") || lower.includes("airpod");
+
+  const spec = {
+    productType: isAirpodsLike ? "wireless_earbuds" : "generic",
+    queries: [],
+    mustHave: [],
+    niceToHave: [],
+    exclude: defaultExcludeForQuery(),
+    price: isAirpodsLike ? { min: 20, max: 250 } : null,
+    // undefined -> AliExpress ישתמש במיון הרלוונטיות הפנימי שלו במקום להיכפות
+    // תמיד למיון לפי וליום מכירות; הדירוג שלנו (scoreProduct) כבר מביא volume בחשבון.
+    sortPreference: undefined
+  };
+
+  if (isAirpodsLike) {
+    spec.queries = [`${q} anc`, `${q} tws anc`, `tws earbuds anc airpods pro 2`];
+    spec.mustHave = ["earbuds", "tws"];
+    spec.niceToHave = ["anc", "noise cancelling", "low latency"];
+  } else {
+    spec.queries = [q];
+  }
+
+  return spec;
+}
+
+function simplifyQuery(query) {
+  const filtered = tokenize(query).filter((w) => !SIMPLIFY_STOPWORDS.includes(w));
+
+  // Widening used to just take the first N words — for a query like "Original Lower
+  // Suspension Rubber Bushing ... GAC Trumpchi GS3 GE3" that keeps "original lower
+  // suspension" and throws away the actual product noun and every brand/model code.
+  // Prefer distinctive tokens (anything with a digit — model/part codes — then longer
+  // words) when picking what survives, but keep them in their original relative order
+  // so the resulting phrase still reads naturally to AliExpress's own search.
+  const pick = (n) =>
+    filtered
+      .map((w, i) => ({ w, i, weight: (/\d/.test(w) ? 100 : 0) + w.length }))
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, n)
+      .sort((a, b) => a.i - b.i)
+      .map((t) => t.w)
+      .join(" ");
+
+  return {
+    original: query,
+    short: pick(4),
+    core: pick(2)
+  };
+}
+
+async function aliSearch({
+  appKey,
+  secret,
+  trackingId,
+  keywords,
+  shipTo,
+  pageSize,
+  pageNo,
+  targetCurrency,
+  targetLanguage,
+  minPrice,
+  maxPrice,
+  deliveryDays,
+  sort
+}) {
+  // בונים פרמטרים בסיסיים
+  let params = {
+    app_key: appKey,
+    method: "aliexpress.affiliate.product.query",
+    timestamp: Date.now(),
+    format: "json",
+    sign_method: "md5",
+    keywords,
+    tracking_id: trackingId,
+    page_no: pageNo,
+    page_size: pageSize,
+    target_currency: targetCurrency,
+    target_language: targetLanguage,
+    ship_to_country: shipTo,
+
+    // אופציונליים — יימחקו אם undefined
+    min_sale_price: minPrice,
+    max_sale_price: maxPrice,
+    delivery_days: deliveryDays,
+    sort
+  };
+
+  // ✅ קריטי: לנקות לפני חתימה ולפני URL
+  params = cleanParams(params);
+
+  params.sign = sign(secret, params);
+
+  const url = `${ALI_ENDPOINT}?${new URLSearchParams(params).toString()}`;
+  const response = await fetch(url);
+  const data = await response.json();
+
+  const products =
+    data?.aliexpress_affiliate_product_query_response?.resp_result?.result?.products?.product || [];
+
+  return { products: Array.isArray(products) ? products : [], raw: data, url };
+}
+
+/**
+ * Run a full affiliate search.
+ *
+ * Never throws for expected conditions — returns a tagged result instead, so each
+ * caller (HTTP route, Telegram bot) can map it to its own output format:
+ *   { ok: false, reason: "missing_env", have: {...} }
+ *   { ok: false, reason: "no_results", lastUrl, lastRaw }
+ *   { ok: true, best, results, meta }
+ *
+ * `best` is the weighted-random pick among the top results (kept for the website, which
+ * wants some variety between identical searches). `results[0]` is always the strictly
+ * top-ranked product — use that when accuracy matters more than variety.
+ */
+export async function searchAffiliate({
+  query,
+  shipTo = "US",
+  pageSize = 30,
+  minPrice,
+  maxPrice,
+  deliveryDays
+} = {}) {
+  const rawQuery = String(query || "").trim();
+  const simplified = simplifyQuery(rawQuery);
+
+  const appKey = process.env.ALIEXPRESS_APP_KEY;
+  const secret = process.env.ALIEXPRESS_APP_SECRET;
+  const trackingId = process.env.ALIEXPRESS_TRACKING_ID;
+
+  if (!appKey || !secret || !trackingId) {
+    return {
+      ok: false,
+      reason: "missing_env",
+      have: { appKey: !!appKey, secret: !!secret, trackingId: !!trackingId }
+    };
+  }
+
+  const aiSpec = await refineWithAI(rawQuery);
+  // חשוב: השאילתה המלאה של המשתמש, לא simplified.core/short (2-3 מילים בלבד) —
+  // קיצוץ מוקדם היה זורק את רוב הספציפיות של החיפוש. simplified.short/core עדיין
+  // משמשים רק כהרחבה (widening) אם יוצאות מעט תוצאות, ראה למטה.
+  const spec = aiSpec || buildFallbackSpec(rawQuery);
+  spec.rawQuery = rawQuery; // ל-scoreProduct, כדי לדרג לפי התאמת שאילתה-לכותרת
+
+  console.log(
+    `[affiliateSearch] q="${rawQuery}" shipTo=${shipTo} usedAI=${!!aiSpec} queries=${JSON.stringify(
+      spec.queries
+    )}`
+  );
+
+  const queries = (spec.queries && spec.queries.length ? spec.queries : [rawQuery]).slice(0, 3);
+
+  const all = [];
+  let lastRaw = null;
+  let lastUrl = null;
+
+  for (const q of queries) {
+    const { products, raw, url } = await aliSearch({
+      appKey,
+      secret,
+      trackingId,
+      keywords: q,
+      shipTo,
+      pageSize,
+      pageNo: 1,
+      targetCurrency: "USD",
+      targetLanguage: "EN",
+      minPrice,
+      maxPrice,
+      deliveryDays,
+      sort: spec.sortPreference || undefined
+    });
+
+    lastRaw = raw;
+    lastUrl = url;
+    all.push(...products);
+  }
+
+  // 🔁 FALLBACK: אם יצאו מעט תוצאות – מרחיבים את החיפוש
+  if (all.length < 5 && simplified?.short && simplified.short !== simplified.original) {
+    const { products: fallbackProducts, raw, url } = await aliSearch({
+      appKey,
+      secret,
+      trackingId,
+      keywords: simplified.short, // חיפוש קצר יותר
+      shipTo,
+      pageSize,
+      pageNo: 1,
+      targetCurrency: "USD",
+      targetLanguage: "EN",
+      sort: spec.sortPreference || undefined
+    });
+
+    lastRaw = raw;
+    lastUrl = url;
+    all.push(...fallbackProducts);
+  }
+
+  // Deduplicate
+  const seen = new Set();
+  const uniq = [];
+  for (const p of all) {
+    const key = p.product_id || `${p.product_title}|${p.product_main_image_url}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniq.push(p);
+  }
+
+  if (!uniq.length) {
+    // אם יש בעיה ב-sign/פרמטרים - פה נראה את זה עם debug=1
+    return { ok: false, reason: "no_results", lastUrl, lastRaw };
+  }
+
+  // Filter accessories
+  const exclude = (spec.exclude || []).map((x) => String(x).toLowerCase());
+  const filtered = uniq.filter((p) => {
+    const t = `${p.product_title || ""}`.toLowerCase();
+    return !exclude.some((w) => w && t.includes(w));
+  });
+
+  // Rerank
+  const ranked = (filtered.length ? filtered : uniq)
+    .map((p) => ({ p, score: scoreProduct(p, spec) }))
+    .sort((a, b) => b.score - a.score);
+
+  if (!ranked.length) {
+    return { ok: false, reason: "no_results", lastUrl, lastRaw };
+  }
+
+  // בוחרים בצורה מגוונת מתוך הטופ
+  const chosen = pickWithBias(ranked, 6);
+
+  const top6 = ranked.slice(0, 6).map(({ p, score }) => ({
+    score,
+    title: p.product_title,
+    price: parseFloat(p.target_sale_price),
+    currency: p.target_sale_price_currency,
+    image: p.product_main_image_url,
+    affiliate_link: p.promotion_link
+  }));
+
+  const best = chosen
+    ? {
+        title: chosen.p.product_title,
+        price: parseFloat(chosen.p.target_sale_price),
+        currency: chosen.p.target_sale_price_currency,
+        image: chosen.p.product_main_image_url,
+        affiliate_link: chosen.p.promotion_link
+      }
+    : top6[0];
+
+  return {
+    ok: true,
+    best,
+    results: top6,
+    meta: {
+      inputQuery: rawQuery,
+      usedAI: !!aiSpec,
+      shipTo,
+      usedQueries: queries,
+      pageSize
+    }
+  };
+}

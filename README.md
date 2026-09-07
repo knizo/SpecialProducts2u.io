@@ -100,17 +100,51 @@ provider is a small drop-in file (see the comment at the top of `index.js`).
 | `VITE_FIREBASE_MESSAGING_SENDER_ID` | Firebase messaging sender ID. |
 | `VITE_FIREBASE_APP_ID` | Firebase app ID. |
 
+### Telegram bot (optional — only needed if you run the group bot)
+
+| Variable | Description |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Bot token from [@BotFather](https://t.me/BotFather). Required for the bot to reply. |
+| `TELEGRAM_WEBHOOK_SECRET` | Shared secret passed to `setWebhook` as `secret_token`; Telegram echoes it back on every request and the webhook rejects anything else. Strongly recommended — the webhook URL is public. |
+| `TELEGRAM_TRIGGER` | Optional bare trigger word/phrase, e.g. `deal:` → `deal: wireless earbuds`. Requires turning **off** Group Privacy in BotFather (see below). The `/deal`, `/find`, `/ali` commands always work regardless. |
+| `TELEGRAM_SHIP_TO` | Two-letter country the bot searches for, default `US`. Unlike the website there is no visitor IP to geolocate here, so set this to your group's country (e.g. `IL`). |
+
 > All `VITE_*` variables are inlined into the client bundle at build time — do not put secrets
 > in them. `ALIEXPRESS_APP_SECRET` and API keys without a `VITE_` prefix stay server-side only.
+
+## Telegram Bot Setup
+
+The bot listens in a group and replies **only** when explicitly asked — either with a command
+(`/deal wireless earbuds`) or with your own trigger word (`deal: wireless earbuds`). Everything
+else in the group is ignored.
+
+1. Create the bot with [@BotFather](https://t.me/BotFather) (`/newbot`) and copy the token into
+   `TELEGRAM_BOT_TOKEN` in Vercel.
+2. Pick any random string as `TELEGRAM_WEBHOOK_SECRET` and set it in Vercel too.
+3. Deploy, then register the webhook once (replace the placeholders):
+   ```
+   https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<your-domain>/api/telegram-webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>
+   ```
+   Open that URL in a browser — you should get `{"ok":true,...}`.
+4. Add the bot to your group.
+5. **Only if you want the bare trigger word** (`deal: ...`) instead of `/deal ...`: in BotFather
+   go to `/mybots` → your bot → *Bot Settings* → *Group Privacy* → **Turn off**, then remove and
+   re-add the bot to the group. With privacy ON (Telegram's default) a bot only receives
+   commands, @-mentions, and replies to itself — which is why `/deal` works with no extra setup.
+
+To check what's registered: `https://api.telegram.org/bot<TOKEN>/getWebhookInfo`.
+To stop the bot: `https://api.telegram.org/bot<TOKEN>/deleteWebhook`.
 
 ## Project Structure
 
 ```
 /api                     Vercel serverless functions (Node.js)
-  search-affiliate.js     Main search endpoint: query -> AliExpress results, ranked
+  search-affiliate.js     HTTP entry point for the website search box
+  telegram-webhook.js     Telegram group bot (replies with the tracked affiliate link)
   aliexpress-generate-link.js   Standalone deep-link generator for a known product URL
   aliexpress-test.js      Connectivity/credentials smoke test
-  lib/aiProviders/        Pluggable AI query-refinement providers (gemini.js today)
+  lib/affiliateSearch.js  Shared search core (AI refine -> AliExpress query -> rank)
+  lib/aiProviders/        Pluggable AI query-refinement providers (groq.js, gemini.js)
 /components               React UI components (ProductCard, AdminPanel, Login, ...)
 /services                 Client-side data/auth/AI services (Firestore, Gemini, TOTP)
 App.tsx, index.tsx         App shell / entry point
