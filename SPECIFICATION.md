@@ -62,9 +62,15 @@ interface Product {
   see §5), not always literally the top score.
 - `results` is the array the frontend actually renders: the top 6 ranked products.
 - `debug=1` additionally returns `meta` (input query, whether AI refinement was used, the
-  AliExpress queries actually issued, ship-to country, page size) and, on a "no product found"
-  error, the raw AliExpress response and request URL — for troubleshooting signature/credential
-  issues.
+  resolved ship-to country plus the raw detected geo country, the AliExpress queries actually
+  issued, page size) and, on a "no product found" error, the raw AliExpress response and request
+  URL — for troubleshooting signature/credential issues.
+- `ship_to_country` defaults to the visitor's real country, read from Vercel's automatic
+  `x-vercel-ip-country` request header (production only — absent in local `vercel dev`), falling
+  back to `US` if that header isn't present. Always querying AliExpress as `US` regardless of the
+  actual visitor previously caused affiliate links that opened to "not eligible for the affiliate
+  program or not available in your region" for non-US visitors, since some listings only ship to
+  a subset of countries; explicit `?ship_to_country=` in the query string still overrides both.
 
 **Errors:**
 - `500` — missing `ALIEXPRESS_APP_KEY` / `ALIEXPRESS_APP_SECRET` / `ALIEXPRESS_TRACKING_ID`.

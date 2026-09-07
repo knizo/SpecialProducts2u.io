@@ -28,6 +28,10 @@ Rules:
   noun + key attributes), not full sentences and not the user's marketing-style wording
   verbatim — AliExpress's own search matches best against short keyword phrases, the same
   way a seller would title a listing.
+- If the query names a specific brand, model, or part/model code (e.g. "GS3", "iPhone 15
+  Pro", "RTX 4090", "GAC Trumpchi"), that is the single strongest signal of a correct match —
+  never paraphrase or drop it. Keep it verbatim in every "queries" entry, and always add it to
+  "mustHave" so an unrelated but popular listing can't outrank the actual matching product.
 - Keep "exclude" specific to this query's false positives, not a generic list.
 - If the query is vague, make reasonable assumptions but keep "mustHave" short.
 

@@ -72,8 +72,25 @@ function scoreProduct(product, spec) {
   const queryWords = tokenize(spec.rawQuery).filter((w) => !FILLER_WORDS.includes(w));
   if (queryWords.length) {
     const titleWords = new Set(tokenize(title));
-    const matched = queryWords.filter((w) => titleWords.has(w)).length;
-    score += (matched / queryWords.length) * 30;
+    const matched = queryWords.filter((w) => titleWords.has(w));
+    const matchRatio = matched.length / queryWords.length;
+    score += matchRatio * 55;
+
+    // Tokens with a digit (model codes / part numbers, e.g. "gs3", "rtx4090") are the
+    // strongest possible signal that this is literally the right item — a generic
+    // word like "bushing" or "case" matches thousands of unrelated products, but a
+    // model code matching is close to conclusive. Reward it well beyond the ratio above.
+    const matchedCodes = matched.filter((w) => /\d/.test(w));
+    score += matchedCodes.length * 10;
+
+    // A query with several meaningful words where most DON'T appear in the title is
+    // very likely the wrong product, no matter how well it sells elsewhere — this is
+    // what stops an unrelated bestseller from beating a real (but low-volume) match.
+    // Gated on queryWords.length so short/generic queries (1-2 words) aren't penalized
+    // just for legitimately matching broadly.
+    if (queryWords.length >= 3 && matchRatio < 0.34) {
+      score -= 40;
+    }
   }
 
   // ===== 1️⃣ איכות כללית =====
@@ -83,7 +100,7 @@ function scoreProduct(product, spec) {
 
   // ===== 2️⃣ ביקוש =====
   if (!Number.isNaN(volume)) {
-    score += Math.log10(volume + 1) * 12;
+    score += Math.log10(volume + 1) * 8;
   }
 
   // ===== 3️⃣ רווחיות =====
@@ -201,10 +218,25 @@ function buildFallbackSpec(query) {
 function simplifyQuery(query) {
   const filtered = tokenize(query).filter((w) => !SIMPLIFY_STOPWORDS.includes(w));
 
+  // Widening used to just take the first N words — for a query like "Original Lower
+  // Suspension Rubber Bushing ... GAC Trumpchi GS3 GE3" that keeps "original lower
+  // suspension" and throws away the actual product noun and every brand/model code.
+  // Prefer distinctive tokens (anything with a digit — model/part codes — then longer
+  // words) when picking what survives, but keep them in their original relative order
+  // so the resulting phrase still reads naturally to AliExpress's own search.
+  const pick = (n) =>
+    filtered
+      .map((w, i) => ({ w, i, weight: (/\d/.test(w) ? 100 : 0) + w.length }))
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, n)
+      .sort((a, b) => a.i - b.i)
+      .map((t) => t.w)
+      .join(" ");
+
   return {
     original: query,
-    short: filtered.slice(0, 3).join(" "),
-    core: filtered.slice(0, 2).join(" ")
+    short: pick(4),
+    core: pick(2)
   };
 }
 
@@ -282,8 +314,13 @@ export default async function handler(req, res) {
       });
     }
 
-    // לשמור תאימות למה שעבד: US ברירת מחדל (אפשר להעביר ב-query)
-    const shipTo = (req.query.ship_to_country || "US").toString().toUpperCase();
+    // ברירת מחדל: המדינה האמיתית של המבקר (Vercel שולח x-vercel-ip-country אוטומטית
+    // בפרודקשן), ורק אם אין את זה (למשל בפיתוח מקומי) נופלים ל-US. חיוני: אם תמיד
+    // מבקשים "US" בזמן שהמבקר בפועל נמצא במדינה אחרת, ה-API עלול להחזיר מוצרים
+    // שזמינים למשלוח ל-US אבל לא ל-region האמיתי של המבקר — ואז הקישור נשבר עם
+    // "not eligible for the affiliate program or not available in your region" בלחיצה.
+    const geoCountry = (req.headers["x-vercel-ip-country"] || "").toString().toUpperCase();
+    const shipTo = (req.query.ship_to_country || geoCountry || "US").toString().toUpperCase();
     const pageSize = Math.min(parseInt(req.query.page_size || "30", 10) || 30, 50);
 
     const deliveryDays = req.query.delivery_days ? String(req.query.delivery_days) : undefined;
@@ -421,7 +458,7 @@ const best = chosen ? {
       // new: top 3
       results: top6,
 
-      ...(debug ? { meta: { inputQuery: rawQuery, usedAI: !!aiSpec, shipTo, usedQueries: queries, pageSize } } : {})
+      ...(debug ? { meta: { inputQuery: rawQuery, usedAI: !!aiSpec, shipTo, geoCountry, usedQueries: queries, pageSize } } : {})
     });
   } catch (err) {
     console.error("search-affiliate failed:", err);
