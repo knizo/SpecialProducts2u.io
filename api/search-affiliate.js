@@ -44,7 +44,9 @@ export default async function handler(req, res) {
       // אם יש בעיה ב-sign/פרמטרים - פה נראה את זה עם debug=1
       return res.status(404).json({
         error: "No product found",
-        ...(debug ? { lastUrl: result.lastUrl, lastRaw: result.lastRaw } : {})
+        ...(debug
+          ? { lastUrl: result.lastUrl, lastRaw: result.lastRaw, meta: { ...result.meta, geoCountry } }
+          : {})
       });
     }
 

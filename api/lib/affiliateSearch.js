@@ -219,18 +219,38 @@ function buildFallbackSpec(query) {
   return spec;
 }
 
-function simplifyQuery(query) {
-  const filtered = tokenize(query).filter((w) => !SIMPLIFY_STOPWORDS.includes(w));
+function simplifyQuery(query, mustHave = []) {
+  // Preserve original capitalization per word (before tokenize()'s lowercasing) so we
+  // can use "was this Capitalized in the sentence the user typed" as a weak brand-name
+  // signal below — tokenize() alone throws that information away.
+  const rawWords = String(query || "").trim().split(/\s+/).filter(Boolean);
+  const filtered = rawWords
+    .map((raw) => ({ raw, clean: raw.toLowerCase().replace(/[^a-z0-9]/g, "") }))
+    .filter(({ clean }) => clean && !SIMPLIFY_STOPWORDS.includes(clean));
+
+  // mustHave often already contains exactly the brand/model terms the AI identified as
+  // essential (see shared.js's prompt) — trust that over any lexical guess.
+  const mustHaveTokens = new Set((mustHave || []).flatMap((m) => tokenize(String(m))));
 
   // Widening used to just take the first N words — for a query like "Original Lower
   // Suspension Rubber Bushing ... GAC Trumpchi GS3 GE3" that keeps "original lower
   // suspension" and throws away the actual product noun and every brand/model code.
-  // Prefer distinctive tokens (anything with a digit — model/part codes — then longer
-  // words) when picking what survives, but keep them in their original relative order
-  // so the resulting phrase still reads naturally to AliExpress's own search.
+  // Prefer, in order: AI-identified mustHave terms, then tokens with a digit (model/part
+  // codes), then tokens capitalized in the original sentence (a weak brand-name signal —
+  // unreliable on its own for Title-Case queries where every word is capitalized, which
+  // is why it's the last resort rather than the primary signal), then longer words.
+  // Keep survivors in their original relative order so the phrase still reads naturally
+  // to AliExpress's own search.
   const pick = (n) =>
     filtered
-      .map((w, i) => ({ w, i, weight: (/\d/.test(w) ? 100 : 0) + w.length }))
+      .map(({ raw, clean }, i) => {
+        const weight =
+          (mustHaveTokens.has(clean) ? 200 : 0) +
+          (/\d/.test(clean) ? 100 : 0) +
+          (/^[A-Z]/.test(raw) ? 20 : 0) +
+          clean.length;
+        return { w: clean, i, weight };
+      })
       .sort((a, b) => b.weight - a.weight)
       .slice(0, n)
       .sort((a, b) => a.i - b.i)
@@ -302,8 +322,13 @@ async function aliSearch({
  * Never throws for expected conditions — returns a tagged result instead, so each
  * caller (HTTP route, Telegram bot) can map it to its own output format:
  *   { ok: false, reason: "missing_env", have: {...} }
- *   { ok: false, reason: "no_results", lastUrl, lastRaw }
+ *   { ok: false, reason: "no_results", lastUrl, lastRaw, meta }
  *   { ok: true, best, results, meta }
+ *
+ * `meta` (inputQuery, usedAI, shipTo, usedQueries, pageSize, and widenedTo if the
+ * widening fallback fired) is included on `no_results` too, not just success — a dead-end
+ * search is otherwise a black box: without it you can't tell whether AI refinement ran,
+ * what queries were actually sent to AliExpress, or whether widening kicked in.
  *
  * `best` is the weighted-random pick among the top results (kept for the website, which
  * wants some variety between identical searches). `results[0]` is always the strictly
@@ -318,7 +343,6 @@ export async function searchAffiliate({
   deliveryDays
 } = {}) {
   const rawQuery = String(query || "").trim();
-  const simplified = simplifyQuery(rawQuery);
 
   const appKey = process.env.ALIEXPRESS_APP_KEY;
   const secret = process.env.ALIEXPRESS_APP_SECRET;
@@ -339,6 +363,10 @@ export async function searchAffiliate({
   const spec = aiSpec || buildFallbackSpec(rawQuery);
   spec.rawQuery = rawQuery; // ל-scoreProduct, כדי לדרג לפי התאמת שאילתה-לכותרת
 
+  // Computed after spec so widening can prioritize the AI's own identified brand/model
+  // terms (spec.mustHave) over a lexical guess — see simplifyQuery()'s comment.
+  const simplified = simplifyQuery(rawQuery, spec.mustHave);
+
   console.log(
     `[affiliateSearch] q="${rawQuery}" shipTo=${shipTo} usedAI=${!!aiSpec} queries=${JSON.stringify(
       spec.queries
@@ -346,6 +374,17 @@ export async function searchAffiliate({
   );
 
   const queries = (spec.queries && spec.queries.length ? spec.queries : [rawQuery]).slice(0, 3);
+
+  // Built once and reused on both the failure and success paths, so a "no results" case
+  // is just as debuggable (with ?debug=1) as a successful one — previously this was only
+  // returned on success, making a dead-end search a black box in the logs.
+  const meta = {
+    inputQuery: rawQuery,
+    usedAI: !!aiSpec,
+    shipTo,
+    usedQueries: queries,
+    pageSize
+  };
 
   const all = [];
   let lastRaw = null;
@@ -375,6 +414,8 @@ export async function searchAffiliate({
 
   // 🔁 FALLBACK: אם יצאו מעט תוצאות – מרחיבים את החיפוש
   if (all.length < 5 && simplified?.short && simplified.short !== simplified.original) {
+    meta.widenedTo = simplified.short; // visible in debug output either way it ends up
+
     const { products: fallbackProducts, raw, url } = await aliSearch({
       appKey,
       secret,
@@ -405,7 +446,7 @@ export async function searchAffiliate({
 
   if (!uniq.length) {
     // אם יש בעיה ב-sign/פרמטרים - פה נראה את זה עם debug=1
-    return { ok: false, reason: "no_results", lastUrl, lastRaw };
+    return { ok: false, reason: "no_results", lastUrl, lastRaw, meta };
   }
 
   // Filter accessories
@@ -421,7 +462,7 @@ export async function searchAffiliate({
     .sort((a, b) => b.score - a.score);
 
   if (!ranked.length) {
-    return { ok: false, reason: "no_results", lastUrl, lastRaw };
+    return { ok: false, reason: "no_results", lastUrl, lastRaw, meta };
   }
 
   // בוחרים בצורה מגוונת מתוך הטופ
@@ -450,12 +491,6 @@ export async function searchAffiliate({
     ok: true,
     best,
     results: top6,
-    meta: {
-      inputQuery: rawQuery,
-      usedAI: !!aiSpec,
-      shipTo,
-      usedQueries: queries,
-      pageSize
-    }
+    meta
   };
 }
