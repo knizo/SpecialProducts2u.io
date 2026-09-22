@@ -71,16 +71,18 @@ Preview / Development). Nothing secret should ever be committed to the repo.
 Query refinement runs through a pluggable provider switchboard
 (`api/lib/aiProviders/index.js`) — switching models is just an env var, no code change.
 **Groq is the default** (it's free and the spec-extraction task here doesn't need a frontier
-model); Gemini is available as an alternative today, and adding OpenAI/ChatGPT or any other
-provider is a small drop-in file (see the comment at the top of `index.js`).
+model); Gemini and OpenRouter are available as alternatives today, and adding OpenAI/ChatGPT or
+any other provider is a small drop-in file (see the comment at the top of `index.js`).
 
 | Variable | Description |
 |---|---|
-| `AI_PROVIDER` | Which backend to use for query refinement. Default: `groq`. Set to `gemini` to switch. |
+| `AI_PROVIDER` | Which backend to use for query refinement. Default: `groq`. Set to `gemini` or `openrouter` to switch. |
 | `GROQ_API_KEY` | API key for [Groq](https://console.groq.com) — used when `AI_PROVIDER=groq` (the default). Free tier available. |
 | `GROQ_MODEL` | Optional override, default `openai/gpt-oss-20b`. Groq's model lineup changes fairly often — if you get a `model_not_found` error, check console.groq.com's Playground (Models list) or `curl -s https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY"` for what's actually enabled for your key, and set `GROQ_MODEL` to one of those (e.g. `openai/gpt-oss-120b` for higher quality/slower). |
 | `GEMINI_API_KEY` | Gemini key used when `AI_PROVIDER=gemini`. |
 | `GEMINI_MODEL` | Optional override, default `gemini-3.6-flash`. |
+| `OPENROUTER_API_KEY` | API key from [OpenRouter](https://openrouter.ai/keys) — used when `AI_PROVIDER=openrouter`. |
+| `OPENROUTER_MODEL` | Optional override, default `qwen/qwen3.8-27b:free`. That free model caps at **200 requests/day** — past that it fails over to the heuristic spec builder like any other provider error, until the daily quota resets. Browse [openrouter.ai/models](https://openrouter.ai/models) for a paid alternative if you outgrow it. |
 | `AI_REFINE_ENABLED` | **Enabled by default.** Set to `0` to disable AI-based query refinement in `/api/search-affiliate` (falls back to the heuristic spec builder) — e.g. to cut cost/latency. Silently no-ops (falls back) if the active provider's API key is missing. |
 
 ### AI admin auto-fill (frontend, admin panel)

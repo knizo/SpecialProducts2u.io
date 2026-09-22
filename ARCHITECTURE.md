@@ -61,9 +61,10 @@ catalog on the side.
    2. Calls `refineWithAI(rawQuery)`, which delegates to
       [api/lib/aiProviders/index.js](api/lib/aiProviders/index.js) → whichever provider
       `AI_PROVIDER` selects (default [groq.js](api/lib/aiProviders/groq.js), or
-      [gemini.js](api/lib/aiProviders/gemini.js)), unless `AI_REFINE_ENABLED=0` or that
-      provider's API key is missing. The provider returns a structured **spec** (see
-      [SPECIFICATION.md](SPECIFICATION.md)) or `null` on any failure/timeout (8s bound).
+      [gemini.js](api/lib/aiProviders/gemini.js) / [openrouter.js](api/lib/aiProviders/openrouter.js)),
+      unless `AI_REFINE_ENABLED=0` or that provider's API key is missing. The provider returns a
+      structured **spec** (see [SPECIFICATION.md](SPECIFICATION.md)) or `null` on any
+      failure/timeout (8s bound).
    3. Falls back to `buildFallbackSpec()` (heuristic, no AI) if the AI spec is `null`.
    4. Runs up to 3 AliExpress queries from `spec.queries`, MD5-signing each request
       (`aliexpress.affiliate.product.query`).

@@ -11,6 +11,7 @@
 
 import * as gemini from "./gemini.js";
 import * as groq from "./groq.js";
+import * as openrouter from "./openrouter.js";
 
 const PROVIDERS = {
   groq: {
@@ -26,6 +27,14 @@ const PROVIDERS = {
       gemini.refineQuery(rawQuery, {
         apiKey: process.env.GEMINI_API_KEY,
         model: process.env.GEMINI_MODEL || "gemini-3.6-flash"
+      })
+  },
+
+  openrouter: {
+    refineQuery: (rawQuery) =>
+      openrouter.refineQuery(rawQuery, {
+        apiKey: process.env.OPENROUTER_API_KEY,
+        model: process.env.OPENROUTER_MODEL || "qwen/qwen3.8-27b:free"
       })
   }
 };

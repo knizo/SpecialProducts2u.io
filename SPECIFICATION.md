@@ -124,6 +124,15 @@ provider, select with `AI_PROVIDER=gemini`. Model `gemini-3.6-flash` (overridabl
 `GEMINI_MODEL`), `responseMimeType: "application/json"`, `temperature: 0.2`. Key:
 `GEMINI_API_KEY`.
 
+**OpenRouter** ([api/lib/aiProviders/openrouter.js](api/lib/aiProviders/openrouter.js)) —
+alternative provider, select with `AI_PROVIDER=openrouter`. OpenAI-compatible chat-completions
+endpoint (`openrouter.ai/api/v1/chat/completions`), model `qwen/qwen3.8-27b:free` (overridable
+via `OPENROUTER_MODEL`), `response_format: { type: "json_object" }`, `temperature: 0.2`. Key:
+`OPENROUTER_API_KEY`. Also sends `HTTP-Referer`/`X-Title` headers, which OpenRouter uses for
+attribution on their end only — they don't affect the request. The default free model caps at
+200 requests/day; past that, requests fail over to the heuristic spec like any other provider
+error.
+
 Switching providers, or adding a new one (OpenAI/ChatGPT, etc.), never touches
 `search-affiliate.js` or the ranking logic — see §4c.
 
