@@ -317,6 +317,65 @@ async function aliSearch({
 }
 
 /**
+ * Swap product.query's long `/s/...` promotion links for short `/e/...` ones via
+ * aliexpress.affiliate.link.generate — one batched call for all items.
+ *
+ * Returns a Map of productId -> short link. Any failure (timeout, empty result, an item
+ * AliExpress won't link) just leaves that item out of the map, so callers keep the
+ * original long link for it: shortening is cosmetic and must never break a search.
+ */
+async function generateShortLinks({ appKey, secret, trackingId, productIds }) {
+  const shortLinks = new Map();
+  const ids = productIds.filter(Boolean);
+  if (!ids.length) return shortLinks;
+
+  let params = {
+    app_key: appKey,
+    method: "aliexpress.affiliate.link.generate",
+    timestamp: Date.now().toString(),
+    format: "json",
+    sign_method: "md5",
+    v: "2.0",
+    promotion_link_type: "0", // standard commission link (2 = hot-product commission)
+    source_values: ids.map((id) => `https://www.aliexpress.com/item/${id}.html`).join(","),
+    tracking_id: trackingId
+  };
+  params = cleanParams(params);
+  params.sign = sign(secret, params);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const response = await fetch(`${ALI_ENDPOINT}?${new URLSearchParams(params).toString()}`, {
+      signal: controller.signal
+    });
+    const data = await response.json();
+
+    const links =
+      data?.aliexpress_affiliate_link_generate_response?.resp_result?.result?.promotion_links
+        ?.promotion_link || [];
+
+    // Match results back by the item ID inside source_value rather than by array
+    // position or exact URL string, since AliExpress may reorder or normalize them.
+    for (const entry of Array.isArray(links) ? links : []) {
+      const id = String(entry?.source_value || "").match(/item\/(\d+)\.html/)?.[1];
+      if (id && entry?.promotion_link) shortLinks.set(id, entry.promotion_link);
+    }
+
+    if (!shortLinks.size) {
+      console.warn("[affiliateSearch] link.generate returned no short links:", JSON.stringify(data).slice(0, 500));
+    }
+  } catch (err) {
+    console.error("[affiliateSearch] link.generate failed, keeping long links:", err.message);
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  return shortLinks;
+}
+
+/**
  * Run a full affiliate search.
  *
  * Never throws for expected conditions — returns a tagged result instead, so each
@@ -340,7 +399,8 @@ export async function searchAffiliate({
   pageSize = 30,
   minPrice,
   maxPrice,
-  deliveryDays
+  deliveryDays,
+  shortenLinks = false
 } = {}) {
   const rawQuery = String(query || "").trim();
 
@@ -468,22 +528,39 @@ export async function searchAffiliate({
   // בוחרים בצורה מגוונת מתוך הטופ
   const chosen = pickWithBias(ranked, 6);
 
-  const top6 = ranked.slice(0, 6).map(({ p, score }) => ({
+  const top = ranked.slice(0, 6);
+
+  const shortLinks = shortenLinks
+    ? await generateShortLinks({
+        appKey,
+        secret,
+        trackingId,
+        // `chosen` is always one of these six (pickWithBias draws from the top 6).
+        productIds: top.map(({ p }) => String(p.product_id || ""))
+      })
+    : new Map();
+  meta.shortenedLinks = shortenLinks ? shortLinks.size : 0;
+
+  const linkFor = (p) => shortLinks.get(String(p.product_id || "")) || p.promotion_link;
+
+  const top6 = top.map(({ p, score }) => ({
     score,
+    productId: p.product_id,
     title: p.product_title,
     price: parseFloat(p.target_sale_price),
     currency: p.target_sale_price_currency,
     image: p.product_main_image_url,
-    affiliate_link: p.promotion_link
+    affiliate_link: linkFor(p)
   }));
 
   const best = chosen
     ? {
+        productId: chosen.p.product_id,
         title: chosen.p.product_title,
         price: parseFloat(chosen.p.target_sale_price),
         currency: chosen.p.target_sale_price_currency,
         image: chosen.p.product_main_image_url,
-        affiliate_link: chosen.p.promotion_link
+        affiliate_link: linkFor(chosen.p)
       }
     : top6[0];
 

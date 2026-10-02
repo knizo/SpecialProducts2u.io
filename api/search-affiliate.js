@@ -30,7 +30,8 @@ export default async function handler(req, res) {
       pageSize,
       minPrice,
       maxPrice,
-      deliveryDays
+      deliveryDays,
+      shortenLinks: true
     });
 
     if (!result.ok && result.reason === "missing_env") {
