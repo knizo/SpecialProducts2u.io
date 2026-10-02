@@ -31,7 +31,7 @@ export default async function handler(req, res) {
     timestamp: Date.now(),
     format: "json",
     sign_method: "md5",
-    promotion_link_type: "2",
+    promotion_link_type: "1",
     source_values: product_url,
     tracking_id: "Electronics"
   };
