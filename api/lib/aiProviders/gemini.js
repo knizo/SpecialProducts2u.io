@@ -1,27 +1,22 @@
 // api/lib/aiProviders/gemini.js
 //
-// Gemini implementation of the "refineQuery" contract.
-// Turns a raw user search string into a structured spec the
-// AliExpress search logic can use directly (replacing the old
-// simplifyQuery/buildFallbackSpec word-truncation approach).
-
-import { buildRefinePrompt, normalizeSpec } from "./shared.js";
+// Gemini transport: send a prompt, get parsed JSON back (or null on any failure).
+// What the prompts say and how answers are normalized lives in shared.js, so every
+// provider behaves identically for every task.
 
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
-export async function refineQuery(rawQuery, { apiKey, model = "gemini-3.6-flash" } = {}) {
+export async function completeJSON(prompt, { apiKey, model = "gemini-3.6-flash", timeoutMs = 8000 } = {}) {
   if (!apiKey) {
-    console.warn("Gemini refineQuery: missing API key, skipping AI refinement.");
+    console.warn("Gemini: missing API key, skipping AI call.");
     return null;
   }
 
-  const prompt = buildRefinePrompt(rawQuery);
   const url = `${GEMINI_ENDPOINT}/${model}:generateContent?key=${apiKey}`;
 
-  // AI refinement now runs by default on every search — a hung request must never
-  // stall the whole route, so bound it explicitly.
+  // A hung request must never stall the whole search route, so bound it explicitly.
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   let res;
   try {
@@ -38,7 +33,7 @@ export async function refineQuery(rawQuery, { apiKey, model = "gemini-3.6-flash"
       signal: controller.signal
     });
   } catch (err) {
-    console.error("Gemini refineQuery: network/timeout error", err.message);
+    console.error("Gemini: network/timeout error", err.message);
     return null;
   } finally {
     clearTimeout(timeout);
@@ -46,22 +41,21 @@ export async function refineQuery(rawQuery, { apiKey, model = "gemini-3.6-flash"
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    console.error("Gemini refineQuery: bad response", res.status, errText);
+    console.error("Gemini: bad response", res.status, errText);
     return null;
   }
 
   const data = await res.json();
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) {
-    console.error("Gemini refineQuery: empty response", JSON.stringify(data).slice(0, 500));
+    console.error("Gemini: empty response", JSON.stringify(data).slice(0, 500));
     return null;
   }
 
   try {
-    const parsed = JSON.parse(text);
-    return normalizeSpec(parsed, rawQuery);
-  } catch (e) {
-    console.error("Gemini refineQuery: failed to parse JSON:", text.slice(0, 500));
+    return JSON.parse(text);
+  } catch {
+    console.error("Gemini: failed to parse JSON:", text.slice(0, 500));
     return null;
   }
 }

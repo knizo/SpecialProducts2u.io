@@ -82,8 +82,10 @@ any other provider is a small drop-in file (see the comment at the top of `index
 | `GEMINI_API_KEY` | Gemini key used when `AI_PROVIDER=gemini`. |
 | `GEMINI_MODEL` | Optional override, default `gemini-3.6-flash`. |
 | `OPENROUTER_API_KEY` | API key from [OpenRouter](https://openrouter.ai/keys) — used when `AI_PROVIDER=openrouter`. |
-| `OPENROUTER_MODEL` | Optional override, default `qwen/qwen3.8-27b:free`. That free model caps at **200 requests/day** — past that it fails over to the heuristic spec builder like any other provider error, until the daily quota resets. Browse [openrouter.ai/models](https://openrouter.ai/models) for a paid alternative if you outgrow it. |
-| `AI_REFINE_ENABLED` | **Enabled by default.** Set to `0` to disable AI-based query refinement in `/api/search-affiliate` (falls back to the heuristic spec builder) — e.g. to cut cost/latency. Silently no-ops (falls back) if the active provider's API key is missing. |
+| `OPENROUTER_MODEL` | Optional override, default `qwen/qwen3.8-27b:free`. Free (`:free`) models are limited to **20 requests/minute and 50 requests/day** on an account with no purchased credits. Each search uses up to 2 AI calls (refine + verify), so that's roughly 25 searches a day — Groq's free tier is far higher. Past the limit, AI steps fail over silently until the quota resets. |
+| `AI_REFINE_ENABLED` | **Enabled by default.** Set to `0` to disable AI-based query refinement (falls back to the heuristic spec builder) — e.g. to cut cost/latency. Silently no-ops (falls back) if the active provider's API key is missing. |
+| `AI_VERIFY_ENABLED` | **Enabled by default.** After ranking, the AI scores the top 15 candidates 0-10 for how well they match the query, and only matches at or above `AI_VERIFY_MIN_SCORE` are shown. Set to `0` to turn this off and show the plain keyword ranking. If the AI call fails, results fall back to the keyword ranking. |
+| `AI_VERIFY_MIN_SCORE` | Minimum AI relevance score (0-10) to show a product. Default `6`. **Raise it** (e.g. `7`-`8`) for stricter, fewer results; **lower it** (e.g. `4`) if too many searches come back with no results. Searches where nothing passes return "no match"; `?debug=1` shows `meta.verify.closest` with the near-misses and their scores, to help pick the right value. |
 
 ### AI admin auto-fill (frontend, admin panel)
 

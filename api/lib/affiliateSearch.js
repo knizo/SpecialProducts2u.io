@@ -79,7 +79,7 @@ function scoreProduct(product, spec) {
 
   // ===== 0️⃣ התאמה לשאילתה המקורית — האיתות הכי חשוב לדיוק =====
   // בלי זה, כותרת לא-קשורה עם rating/volume גבוהים יכולה לנצח מוצר מדויק.
-  const queryWords = tokenize(spec.rawQuery).filter((w) => !FILLER_WORDS.includes(w));
+  const queryWords = tokenize(spec.scoreQuery).filter((w) => !FILLER_WORDS.includes(w));
   if (queryWords.length) {
     const titleWords = new Set(tokenize(title));
     const matched = queryWords.filter((w) => titleWords.has(w));
@@ -186,6 +186,42 @@ async function refineWithAI(rawQuery) {
     return spec; // null if the provider failed — caller already falls back cleanly
   } catch (err) {
     console.error("AI refine failed, falling back to heuristic spec:", err.message);
+    return null;
+  }
+}
+
+// How many top-ranked candidates the AI is asked to check. More catches good matches
+// that keyword scoring ranked low, at the cost of a bigger prompt.
+const VERIFY_CANDIDATES = 15;
+
+// Minimum AI relevance score (0-10) a product needs to be shown. Raise it for stricter
+// results; lower it if too many searches come back empty. Set via AI_VERIFY_MIN_SCORE.
+function getVerifyMinScore() {
+  const value = Number(process.env.AI_VERIFY_MIN_SCORE);
+  return Number.isFinite(value) && process.env.AI_VERIFY_MIN_SCORE !== ""
+    ? Math.max(0, Math.min(10, value))
+    : 6;
+}
+
+// Ask the AI to score how well each top candidate actually matches the query. Keyword
+// scoring can't tell "4G camera with SIM" from "4G SIM router" — they share the words —
+// but the AI can. Returns { candidates, scores } or null if the check didn't run, in
+// which case the caller keeps the keyword ranking unchanged.
+async function verifyWithAI(rawQuery, ranked) {
+  if (process.env.AI_VERIFY_ENABLED === "0") return null;
+
+  const provider = getAIProvider();
+  if (!provider) return null;
+
+  const candidates = ranked.slice(0, VERIFY_CANDIDATES);
+  try {
+    const scores = await provider.verifyResults(
+      rawQuery,
+      candidates.map(({ p }) => p.product_title)
+    );
+    return scores ? { candidates, scores } : null;
+  } catch (err) {
+    console.error("AI verify failed, keeping keyword ranking:", err.message);
     return null;
   }
 }
@@ -382,6 +418,8 @@ async function generateShortLinks({ appKey, secret, trackingId, productIds }) {
  * caller (HTTP route, Telegram bot) can map it to its own output format:
  *   { ok: false, reason: "missing_env", have: {...} }
  *   { ok: false, reason: "no_results", lastUrl, lastRaw, meta }
+ *   { ok: false, reason: "no_close_match", lastUrl, lastRaw, meta }  (AI rejected every
+ *     candidate as below AI_VERIFY_MIN_SCORE; meta.verify.closest lists the near-misses)
  *   { ok: true, best, results, meta }
  *
  * `meta` (inputQuery, usedAI, shipTo, usedQueries, pageSize, and widenedTo if the
@@ -421,11 +459,17 @@ export async function searchAffiliate({
   // קיצוץ מוקדם היה זורק את רוב הספציפיות של החיפוש. simplified.short/core עדיין
   // משמשים רק כהרחבה (widening) אם יוצאות מעט תוצאות, ראה למטה.
   const spec = aiSpec || buildFallbackSpec(rawQuery);
-  spec.rawQuery = rawQuery; // ל-scoreProduct, כדי לדרג לפי התאמת שאילתה-לכותרת
+
+  // The text scoreProduct compares against (English) product titles. tokenize() keeps
+  // only a-z/0-9, so a Hebrew query tokenizes to nothing and relevance scoring would
+  // silently switch off — use the AI's English translation (matchQuery) when there is
+  // one. Without AI there's no translation, so a Hebrew query stays poorly matched.
+  spec.scoreQuery = spec.matchQuery || rawQuery;
 
   // Computed after spec so widening can prioritize the AI's own identified brand/model
-  // terms (spec.mustHave) over a lexical guess — see simplifyQuery()'s comment.
-  const simplified = simplifyQuery(rawQuery, spec.mustHave);
+  // terms (spec.mustHave) over a lexical guess — see simplifyQuery()'s comment. Also
+  // English-based, for the same Hebrew reason as above.
+  const simplified = simplifyQuery(spec.scoreQuery, spec.mustHave);
 
   console.log(
     `[affiliateSearch] q="${rawQuery}" shipTo=${shipTo} usedAI=${!!aiSpec} queries=${JSON.stringify(
@@ -440,6 +484,7 @@ export async function searchAffiliate({
   // returned on success, making a dead-end search a black box in the logs.
   const meta = {
     inputQuery: rawQuery,
+    matchQuery: spec.matchQuery || null,
     usedAI: !!aiSpec,
     shipTo,
     usedQueries: queries,
@@ -525,10 +570,42 @@ export async function searchAffiliate({
     return { ok: false, reason: "no_results", lastUrl, lastRaw, meta };
   }
 
-  // בוחרים בצורה מגוונת מתוך הטופ
-  const chosen = pickWithBias(ranked, 6);
+  // AI relevance check: keep only candidates the AI scores >= the minimum, best first.
+  // Showing fewer real matches beats padding the list with wrong products.
+  let finalRanked = ranked;
+  const verification = await verifyWithAI(rawQuery, ranked);
 
-  const top = ranked.slice(0, 6);
+  if (verification) {
+    const { candidates, scores } = verification;
+    const minScore = getVerifyMinScore();
+    const scored = candidates.map((c, i) => ({ ...c, aiScore: scores[i] }));
+
+    // Products the AI skipped (null score) are treated as not matching.
+    const kept = scored
+      .filter((c) => c.aiScore !== null && c.aiScore >= minScore)
+      .sort((a, b) => b.aiScore - a.aiScore || b.score - a.score);
+
+    meta.verify = { ran: true, minScore, checked: candidates.length, kept: kept.length };
+
+    if (!kept.length) {
+      // Show what nearly made it, so AI_VERIFY_MIN_SCORE can be tuned from ?debug=1.
+      meta.verify.closest = scored
+        .filter((c) => c.aiScore !== null)
+        .sort((a, b) => b.aiScore - a.aiScore)
+        .slice(0, 5)
+        .map((c) => ({ title: c.p.product_title, aiScore: c.aiScore }));
+      return { ok: false, reason: "no_close_match", lastUrl, lastRaw, meta };
+    }
+
+    finalRanked = kept;
+  } else {
+    meta.verify = { ran: false };
+  }
+
+  // בוחרים בצורה מגוונת מתוך הטופ
+  const chosen = pickWithBias(finalRanked, 6);
+
+  const top = finalRanked.slice(0, 6);
 
   const shortLinks = shortenLinks
     ? await generateShortLinks({
@@ -543,8 +620,9 @@ export async function searchAffiliate({
 
   const linkFor = (p) => shortLinks.get(String(p.product_id || "")) || p.promotion_link;
 
-  const top6 = top.map(({ p, score }) => ({
+  const top6 = top.map(({ p, score, aiScore }) => ({
     score,
+    aiScore: aiScore ?? null,
     productId: p.product_id,
     title: p.product_title,
     price: parseFloat(p.target_sale_price),
