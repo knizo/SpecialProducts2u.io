@@ -22,6 +22,7 @@ const TELEGRAM_API = "https://api.telegram.org";
 // Commands work regardless of privacy mode; the keyword trigger needs privacy mode off.
 const COMMANDS = ["/deal", "/find", "/ali"];
 const MAX_QUERY_LEN = 300;
+const RESULTS_PER_REPLY = 4;
 
 function escapeHtml(str) {
   return String(str || "")
@@ -89,17 +90,30 @@ async function sendMessage(chatId, text, replyToMessageId) {
   }
 }
 
-function formatProduct(item) {
+function formatProduct(item, index) {
   const title = escapeHtml(item.title);
   const price = Number.isFinite(item.price) ? item.price.toFixed(2) : null;
   const currency = escapeHtml(item.currency || "USD");
 
-  const lines = [`🛍 <b>${title}</b>`];
+  const lines = [`${index + 1}. 🛍 <b>${title}</b>`];
   if (price) lines.push(`💰 ${price} ${currency}`);
-  // Raw URL on its own line so Telegram renders a link preview of the product.
   lines.push(item.affiliate_link);
 
-  return lines.join("\n\n");
+  return lines.join("\n");
+}
+
+// Telegram rejects messages over 4096 chars outright (the whole reply is lost, not
+// truncated). Short links keep 4 results well under that, but if shortening failed the
+// long ~1000-char links can overflow — so drop results from the end until it fits.
+const TELEGRAM_MAX_LEN = 4096;
+
+// One message rather than one per product, so a single request doesn't flood the group.
+function formatResults(items) {
+  for (let n = items.length; n > 1; n--) {
+    const text = items.slice(0, n).map(formatProduct).join("\n\n");
+    if (text.length <= TELEGRAM_MAX_LEN) return text;
+  }
+  return formatProduct(items[0], 0);
 }
 
 export default async function handler(req, res) {
@@ -170,7 +184,9 @@ export default async function handler(req, res) {
       query,
       // No visitor IP to geolocate here (the request comes from Telegram's servers, not
       // the person typing), so the group's target market is configured explicitly.
-      shipTo: (process.env.TELEGRAM_SHIP_TO || "US").toUpperCase()
+      shipTo: (process.env.TELEGRAM_SHIP_TO || "US").toUpperCase(),
+      // The raw URL is visible in the chat, so a short link matters most here.
+      shortenLinks: true
     });
 
     if (!result.ok && result.reason === "missing_env") {
@@ -188,11 +204,10 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
-    // Deliberately results[0] (strictly top-ranked) rather than result.best, which is
-    // randomized among the top few for variety on the website. In the group the point
-    // is to answer with the item actually asked for, so accuracy beats variety.
-    const item = result.results[0];
-    await sendMessage(chatId, formatProduct(item), message.message_id);
+    // results is already strictly ranked best-first (unlike result.best, which is
+    // randomized for variety on the website), so the top N are the N best matches.
+    const items = result.results.slice(0, RESULTS_PER_REPLY);
+    await sendMessage(chatId, formatResults(items), message.message_id);
 
     return res.status(200).json({ ok: true });
   } catch (err) {
