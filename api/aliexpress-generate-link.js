@@ -53,8 +53,9 @@ export default async function handler(req, res) {
     // Check API credentials
     const appKey = process.env.ALIEXPRESS_APP_KEY;
     const appSecret = process.env.ALIEXPRESS_APP_SECRET;
+    const trackingId = process.env.ALIEXPRESS_TRACKING_ID;
 
-    if (!appKey || !appSecret) {
+    if (!appKey || !appSecret || !trackingId) {
       console.error("AliExpress API credentials are missing");
 
       return res.status(500).json({
@@ -92,8 +93,7 @@ export default async function handler(req, res) {
       // Send the cleaned product URL
       source_values: cleanProductUrl,
 
-      // Change this if you use a different tracking ID
-      tracking_id: "Electronics"
+      tracking_id: trackingId
     };
 
     /*
